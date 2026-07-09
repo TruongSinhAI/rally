@@ -15,6 +15,8 @@ export const FEATURE_FLAGS: Record<string, boolean> = {
   'feature.quality': false,
   'feature.portfolio': false,
   'feature.releases': true,
+  'feature.milestones': true,
+  'feature.quality': true,
   'feature.reports': false,
   // Phase 0 features that are live:
   'feature.home': true,
