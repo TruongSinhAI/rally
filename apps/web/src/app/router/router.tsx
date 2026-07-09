@@ -184,6 +184,13 @@ const milestonesRoute = createRoute({
   component: lazyPage(() => import('@/pages/milestones/milestones-page'), 'MilestonesPage'),
 })
 
+const qualityRoute = createRoute({
+  getParentRoute: () => authRoute,
+  path: '/quality',
+  staticData: { breadcrumb: 'Quality' },
+  component: lazyPage(() => import('@/pages/quality/quality-page'), 'QualityPage'),
+})
+
 // ── Not found ─────────────────────────────────────────────────────────────────
 
 const notFoundRoute = createRoute({
@@ -209,6 +216,7 @@ const routeTree = rootRoute.addChildren([
     iterationStatusRoute,
     releasesRoute,
     milestonesRoute,
+    qualityRoute,
     workItemDetailRoute,
     notFoundRoute,
   ]),
