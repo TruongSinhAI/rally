@@ -65,6 +65,12 @@ const NAV_ITEMS: NavItem[] = [
         featureFlag: 'feature.timeboxes',
         permission: 'iteration:view',
       },
+      {
+        path: '/milestones',
+        label: 'Milestones',
+        featureFlag: 'feature.milestones',
+        permission: 'milestone:view',
+      },
     ],
   },
   {
