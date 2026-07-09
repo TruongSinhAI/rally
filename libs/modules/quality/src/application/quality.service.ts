@@ -4,6 +4,7 @@ import { InjectDrizzle } from '@platform';
 import type { DrizzleDB } from '@platform';
 import { and, eq, isNull, sql, inArray } from 'drizzle-orm';
 import { workItems, iterations, releases } from '../../../../../../db/schema/work';
+import type { DefectSeverity, DefectEnvironment } from '../../../../../../db/schema/enums';
 import { ProjectsService } from '@modules/projects';
 import type { DefectMetrics, DefectRow, DefectListResult } from '../domain/quality.types';
 
@@ -31,10 +32,10 @@ export class QualityService {
     ];
 
     if (opts.severity && opts.severity !== 'all') {
-      conditions.push(eq(workItems.severity, opts.severity as any));
+      conditions.push(eq(workItems.severity, opts.severity as DefectSeverity));
     }
     if (opts.environment && opts.environment !== 'all') {
-      conditions.push(eq(workItems.foundInEnvironment, opts.environment as any));
+      conditions.push(eq(workItems.foundInEnvironment, opts.environment as DefectEnvironment));
     }
     if (opts.search) {
       conditions.push(sql`work_items.title ILIKE ${`%${opts.search}%`}`);

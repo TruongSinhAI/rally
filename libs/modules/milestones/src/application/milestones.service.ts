@@ -6,7 +6,7 @@ import { ProjectsService } from '@modules/projects';
 import { AccessService } from '@modules/access';
 import { PERMISSION } from '@shared-kernel';
 import { IMilestoneRepository, MILESTONE_REPOSITORY } from '../domain/ports/milestone.repository';
-import type { Milestone, UpdateMilestoneInput } from '../domain/milestone.types';
+import type { Milestone, MilestoneStatus, UpdateMilestoneInput } from '../domain/milestone.types';
 
 @Injectable()
 export class MilestonesService {
@@ -51,7 +51,7 @@ export class MilestonesService {
       name,
       description: opts.description,
       notes: opts.notes,
-      status: (opts.status as any) ?? 'planned',
+      status: (opts.status as MilestoneStatus) ?? 'planned',
       ownerId: opts.ownerId,
       releaseIds,
     });
