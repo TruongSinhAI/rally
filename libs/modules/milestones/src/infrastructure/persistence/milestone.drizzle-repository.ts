@@ -79,7 +79,8 @@ export class MilestoneDrizzleRepository implements IMilestoneRepository {
       })
       .where(eq(milestones.id, id))
       .returning();
-    return rows[0];
+    const releaseIds = await this.getReleaseIds(id);
+    return { ...rows[0], releaseIds };
   }
 
   async delete(id: string): Promise<void> {
@@ -111,21 +112,23 @@ export class MilestoneDrizzleRepository implements IMilestoneRepository {
 
     const rows = await this.db
       .select({
-        startDate: releases.startDate,
-        releaseDate: releases.releaseDate,
+        targetDate: releases.targetDate,
+        releasedAt: releases.releasedAt,
       })
       .from(releases)
       .where(sql`${releases.id} = ANY(${releaseIds})`);
 
     if (rows.length === 0) return { startDate: null, endDate: null };
 
-    // Target start = earliest release startDate
-    // Target end = latest release releaseDate or targetDate
+    // Target start = earliest release targetDate
+    // Target end = latest release releasedAt or targetDate
     const starts: string[] = [];
     const ends: string[] = [];
     for (const r of rows) {
-      if (r.startDate) starts.push(r.startDate);
-      if (r.releaseDate) ends.push(r.releaseDate);
+      const start = r.targetDate ? String(r.targetDate) : null;
+      const end = r.releasedAt ? r.releasedAt.toISOString().split('T')[0] : r.targetDate ? String(r.targetDate) : null;
+      if (start) starts.push(start);
+      if (end) ends.push(end);
     }
 
     return {

@@ -229,9 +229,9 @@ function EditMilestoneModal({
 export function MilestonesPage() {
   const { project } = useAppContext()
   const canManage = useAuthStore((s) => s.hasPermission('milestone:manage'))
-  const { data: milestones, isLoading, error } = useMilestones(project.projectId)
+  const { data: milestones, isLoading, error } = useMilestones(project?.projectId)
   const deleteMilestone = useDeleteMilestone()
-  const { data: releases } = useReleases(project.projectId)
+  const { data: releases } = useReleases(project?.projectId)
 
   const [search, setSearch] = useState('')
   const [showCreate, setShowCreate] = useState(false)
@@ -321,7 +321,7 @@ export function MilestonesPage() {
       {/* Table */}
       <div className="flex flex-1 overflow-hidden bg-white">
         {isLoading ? (
-          <SkeletonList rows={6} className="p-4" />
+          <SkeletonList rows={6} />
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center flex-1 gap-3 p-8">
             <PackageOpen size={40} style={{ color: '#c4cad4' }} />
@@ -436,7 +436,7 @@ export function MilestonesPage() {
       {/* Modals */}
       {showCreate && (
         <CreateMilestoneModal
-          projectId={project.projectId}
+          projectId={project?.projectId ?? ''}
           onClose={() => setShowCreate(false)}
         />
       )}

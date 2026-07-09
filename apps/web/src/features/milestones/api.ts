@@ -29,16 +29,19 @@ export const milestoneKeys = {
   detail: (id: string) => [...milestoneKeys.all, 'detail', id] as const,
 } as const
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const client = apiClient as any
+
 export function useMilestones(projectId: string | undefined) {
   return useQuery({
     queryKey: milestoneKeys.list(projectId ?? ''),
     queryFn: async () => {
       if (!projectId) return []
-      const { data, error, response } = await apiClient.GET('/v1/milestones', {
+      const { data, error, response } = await client.GET('/v1/milestones', {
         params: { query: { projectId } },
       })
       if (error) throw new Error(apiErrorMessage(error, response.status))
-      return (data as { data: Milestone[] } | undefined)?.data ?? []
+      return ((data as { data?: Milestone[] } | undefined)?.data ?? []) as Milestone[]
     },
     enabled: !!projectId,
     staleTime: 60_000,
@@ -50,11 +53,11 @@ export function useMilestone(id: string | undefined) {
     queryKey: milestoneKeys.detail(id ?? ''),
     queryFn: async () => {
       if (!id) return null
-      const { data, error, response } = await apiClient.GET('/v1/milestones/{id}', {
+      const { data, error, response } = await client.GET('/v1/milestones/{id}', {
         params: { path: { id } },
       })
       if (error) throw new Error(apiErrorMessage(error, response.status))
-      return data as Milestone
+      return data as unknown as Milestone
     },
     enabled: !!id,
     staleTime: 30_000,
@@ -75,13 +78,13 @@ export function useCreateMilestone() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: async (body: CreateMilestoneInput) => {
-      const { data, error, response } = await apiClient.POST('/v1/milestones', {
+      const { data, error, response } = await client.POST('/v1/milestones', {
         body: body as never,
       })
       if (error) throw new Error(apiErrorMessage(error, response.status))
-      return data as Milestone
+      return data as unknown as Milestone
     },
-    onSuccess: (milestone) => {
+    onSuccess: (milestone: Milestone) => {
       void qc.invalidateQueries({ queryKey: milestoneKeys.list(milestone.projectId) })
     },
   })
@@ -100,12 +103,12 @@ export function useUpdateMilestone() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: async ({ id, ...body }: UpdateMilestoneInput & { id: string }) => {
-      const { data, error, response } = await apiClient.PATCH('/v1/milestones/{id}', {
+      const { data, error, response } = await client.PATCH('/v1/milestones/{id}', {
         params: { path: { id } },
         body: body as never,
       })
       if (error) throw new Error(apiErrorMessage(error, response.status))
-      return data as Milestone
+      return data as unknown as Milestone
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: milestoneKeys.all })
@@ -117,7 +120,7 @@ export function useDeleteMilestone() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: async (id: string) => {
-      const { error, response } = await apiClient.DELETE('/v1/milestones/{id}', {
+      const { error, response } = await client.DELETE('/v1/milestones/{id}', {
         params: { path: { id } },
       })
       if (error) throw new Error(apiErrorMessage(error, response.status))
