@@ -51,6 +51,9 @@ export const PERMISSION = {
   ITERATION_VIEW: 'iteration:view',
   ITERATION_MANAGE: 'iteration:manage',
 
+  // ── release namespace ──────────────────────────────────────────────────────
+  RELEASE_MANAGE: 'release:manage',
+
   // ── milestone namespace ───────────────────────────────────────────────────
   MILESTONE_VIEW: 'milestone:view',
   MILESTONE_MANAGE: 'milestone:manage',
@@ -59,6 +62,8 @@ export const PERMISSION = {
   QUALITY_VIEW: 'quality:view',
   QUALITY_MANAGE: 'quality:manage',
 } as const;
+
+/** Union of every valid permission code. */
 export type Permission = (typeof PERMISSION)[keyof typeof PERMISSION];
 
 /** Union of every valid system-role slug. */
