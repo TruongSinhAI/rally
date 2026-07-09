@@ -2,8 +2,6 @@ import { z } from 'zod';
 import { createZodDto } from 'nestjs-zod';
 import { PageQuerySchema } from '@platform';
 
-const ISO_DATE = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be a date in YYYY-MM-DD format');
-
 export const MilestoneQuerySchema = PageQuerySchema.extend({
   projectId: z.string().uuid(),
 });

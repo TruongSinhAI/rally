@@ -6,7 +6,7 @@
  */
 import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
-import { AlertTriangle, Loader2, Plus, Search, Pencil, Trash2, X, PackageOpen, Link2 } from 'lucide-react'
+import { AlertTriangle, Plus, Search, Pencil, Trash2, PackageOpen } from 'lucide-react'
 import { SkeletonList } from '@/shared/ui/skeleton'
 import { BRAND } from '@/shared/config/brand'
 import { AppModal, ModalBody, ModalFooter } from '@/shared/ui/app-modal'

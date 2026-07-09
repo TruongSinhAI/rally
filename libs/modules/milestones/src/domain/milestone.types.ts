@@ -35,5 +35,7 @@ export interface UpdateMilestoneInput {
   notes?: string | null;
   status?: MilestoneStatus;
   ownerId?: string | null;
+  targetStartDate?: string | null;
+  targetEndDate?: string | null;
   releaseIds?: string[];
 }

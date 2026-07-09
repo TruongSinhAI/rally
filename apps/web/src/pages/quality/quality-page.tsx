@@ -4,21 +4,16 @@
  * Shows defect metrics strip + filterable defect table for the active project.
  */
 import { useState } from 'react'
-import { AlertTriangle, Loader2, Search, Filter, PackageOpen, Plus } from 'lucide-react'
+import { AlertTriangle, Search, Filter, PackageOpen, Plus } from 'lucide-react'
 import { SkeletonList } from '@/shared/ui/skeleton'
 import { BRAND } from '@/shared/config/brand'
 import { useAppContext } from '@/shared/lib/stores/app-context.store'
 import { useAuthStore } from '@/shared/lib/stores/auth.store'
-import { useDefects, type DefectSeverity, type DefectEnvironment } from '@/features/quality/api'
+import { useDefects, type DefectSeverity } from '@/features/quality/api'
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-const SEVERITY_ORDER: Record<DefectSeverity, number> = {
-  critical: 0,
-  high: 1,
-  medium: 2,
-  low: 3,
-}
+// (severity sort order applied inline)
 
 const SEVERITY_STYLE: Record<DefectSeverity, { bg: string; text: string; border: string }> = {
   critical: { bg: '#fef2f2', text: '#b91c1c', border: '#fecaca' },

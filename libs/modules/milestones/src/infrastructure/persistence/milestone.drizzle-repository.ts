@@ -121,8 +121,12 @@ export class MilestoneDrizzleRepository implements IMilestoneRepository {
 
     // Target start = earliest release startDate
     // Target end = latest release releaseDate or targetDate
-    const starts = rows.map((r) => r.startDate).filter((d): d is string => d !== null);
-    const ends = rows.map((r) => r.releaseDate).filter((d): d is string => d !== null);
+    const starts: string[] = [];
+    const ends: string[] = [];
+    for (const r of rows) {
+      if (r.startDate) starts.push(r.startDate);
+      if (r.releaseDate) ends.push(r.releaseDate);
+    }
 
     return {
       startDate: starts.length > 0 ? starts.sort()[0] : null,
