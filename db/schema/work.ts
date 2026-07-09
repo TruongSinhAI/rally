@@ -37,6 +37,9 @@ import {
   workflowStatusCategoryEnum,
   iterationStateEnum,
   releaseStatusEnum,
+  milestoneStatusEnum,
+  defectSeverityEnum,
+  defectEnvironmentEnum,
   teamStatusEnum,
   teamMemberStatusEnum,
   attachmentStatusEnum,
@@ -115,6 +118,10 @@ export const workItems = workSchema.table(
     releaseNotes: text('release_notes'),
     isBlocked: boolean('is_blocked').notNull().default(false),
     blockedReason: text('blocked_reason'),
+    // P3.4 — Defect-specific fields (only meaningful when type = 'defect')
+    severity: defectSeverityEnum('severity'),
+    foundInEnvironment: defectEnvironmentEnum('found_in_environment'),
+    foundInReleaseId: uuid('found_in_release_id'),
     rank: varchar('rank', { length: 255 }).notNull().default(''),
     customFields: jsonb('custom_fields').notNull().default({}),
     createdBy: uuid('created_by').notNull(),
@@ -272,6 +279,51 @@ export const releases = workSchema.table(
   (t) => ({
     tenantIdx: index('ix_releases_tenant').on(t.tenantId),
     projectIdx: index('ix_releases_project').on(t.projectId),
+  }),
+);
+
+// ── milestones (P3.3) ────────────────────────────────────────────────────
+// Project-level milestone that can link to multiple releases.
+// Target dates are derived from linked releases (read-only, computed).
+
+export const milestones = workSchema.table(
+  'milestones',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id').notNull(),
+    projectId: uuid('project_id').notNull(),
+    name: varchar('name', { length: 255 }).notNull(),
+    description: text('description'),
+    notes: text('notes'),
+    status: milestoneStatusEnum('status').notNull().default('planned'),
+    ownerId: uuid('owner_id'),
+    // Target dates are derived from linked releases — stored for fast reads,
+    // recalculated on release link changes.
+    targetStartDate: date('target_start_date'),
+    targetEndDate: date('target_end_date'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    tenantIdx: index('ix_milestones_tenant').on(t.tenantId),
+    projectIdx: index('ix_milestones_project').on(t.projectId),
+    ownerIdx: index('ix_milestones_owner').on(t.ownerId),
+  }),
+);
+
+// ── milestone_releases (junction — milestone ↔ releases, many-to-many) ──
+
+export const milestoneReleases = workSchema.table(
+  'milestone_releases',
+  {
+    milestoneId: uuid('milestone_id').notNull(),
+    releaseId: uuid('release_id').notNull(),
+    linkedAt: timestamp('linked_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.milestoneId, t.releaseId] }),
+    milestoneIdx: index('ix_mr_milestone').on(t.milestoneId),
+    releaseIdx: index('ix_mr_release').on(t.releaseId),
   }),
 );
 

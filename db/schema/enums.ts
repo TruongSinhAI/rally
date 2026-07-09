@@ -83,6 +83,22 @@ export const workItemPriorityEnum = pgEnum('work_item_priority', [
   'urgent',
 ]);
 
+// P3.4 — Defect severity (separate from priority).
+export const defectSeverityEnum = pgEnum('defect_severity', [
+  'critical',
+  'high',
+  'medium',
+  'low',
+]);
+
+// P3.4 — Defect environment where the defect was found.
+export const defectEnvironmentEnum = pgEnum('defect_environment', [
+  'development',
+  'staging',
+  'production',
+  'testing',
+]);
+
 // Rally-style ScheduleState: orthogonal business-maturity dimension, separate
 // from the per-project workflow engine (status_id → workflow_statuses).
 export const workItemScheduleStateEnum = pgEnum('work_item_schedule_state', [
@@ -109,6 +125,16 @@ export const iterationStateEnum = pgEnum('iteration_state', [
 ]);
 
 export const releaseStatusEnum = pgEnum('release_status', ['planned', 'released', 'archived']);
+
+// P3.3 — Milestone states aligned with BA spec.
+export const milestoneStatusEnum = pgEnum('milestone_status', [
+  'planned',
+  'at_risk',
+  'met',
+  'missed',
+  'cancelled',
+  'completed',
+]);
 
 export const attachmentStatusEnum = pgEnum('attachment_status', ['pending', 'completed']);
 
@@ -152,6 +178,9 @@ export type WorkItemScheduleState = (typeof workItemScheduleStateEnum.enumValues
 export type WorkflowStatusCategory = (typeof workflowStatusCategoryEnum.enumValues)[number];
 export type IterationState = (typeof iterationStateEnum.enumValues)[number];
 export type ReleaseStatus = (typeof releaseStatusEnum.enumValues)[number];
+export type MilestoneStatus = (typeof milestoneStatusEnum.enumValues)[number];
+export type DefectSeverity = (typeof defectSeverityEnum.enumValues)[number];
+export type DefectEnvironment = (typeof defectEnvironmentEnum.enumValues)[number];
 export type OutboxStatus = (typeof outboxStatusEnum.enumValues)[number];
 export type EmailJobStatus = (typeof emailJobStatusEnum.enumValues)[number];
 export type NotificationJobStatus = (typeof notificationJobStatusEnum.enumValues)[number];
