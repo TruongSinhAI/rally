@@ -386,6 +386,7 @@ export class WorkItemsService {
       parentId: parent.id,
       iterationId: opts.iterationId ?? parent.iterationId ?? undefined,
       assigneeId: opts.assigneeId ?? parent.assigneeId ?? undefined,
+      teamId: opts.teamId ?? parent.teamId ?? undefined,
     });
   }
 

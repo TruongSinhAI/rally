@@ -74,7 +74,7 @@ const makeMetrics = (overrides: Partial<DefectMetrics> = {}): DefectMetrics => (
 
 const makeRepo = () => ({
   listDefects: vi.fn().mockResolvedValue({
-    rows: [makeDefectRow(), makeDefectRow({ id: 'def-2', title: 'Search returns wrong results', priority: 'normal', severity: 'major', defectState: 'open' })],
+    rows: [makeDefectRow(), makeDefectRow({ id: 'def-2', title: 'Search returns wrong results', priority: 'normal', severity: 'medium', defectState: 'open' })],
   }),
   computeMetrics: vi.fn().mockResolvedValue(makeMetrics()),
 });
