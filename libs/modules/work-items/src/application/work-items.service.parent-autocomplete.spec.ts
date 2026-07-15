@@ -6,7 +6,7 @@ import { ACTIVITY_LOG_REPOSITORY } from '../domain/ports/activity-log.repository
 import { TIME_LOG_REPOSITORY } from '../domain/ports/time-log.repository';
 import { WATCHER_REPOSITORY } from '../domain/ports/watcher.repository';
 import { ATTACHMENT_REPOSITORY } from '../domain/ports/attachment.repository';
-import { StorageService, NotFoundException, PreconditionFailedException } from '@platform';
+import { StorageService } from '@platform';
 import { ProjectsService } from '@modules/projects';
 import { AccessService } from '@modules/access';
 import type { WorkItem } from '../domain/work-item.types';
@@ -76,13 +76,7 @@ const mockWorkItem = (o: Partial<WorkItem> = {}): WorkItem => ({
   ...o,
 });
 
-const mockStatus = (id: string, isDefault = false) => ({
-  id,
-  name: id.replace('status-', ''),
-  position: 0,
-  isDefault,
-  category: 'in_progress' as const,
-});
+
 
 // ── Mock factories ────────────────────────────────────────────────────────────
 
@@ -112,7 +106,9 @@ const makeAccess = () => ({
   assertProjectPermission: vi.fn().mockResolvedValue(undefined),
   getUserRoleAndPermissions: vi.fn().mockResolvedValue({ role: 'member', permissions: ['work_item:edit'] }),
 });
-const makeUoW = () => ({ run: vi.fn(async (fn) => fn(mockTx)) });
+const makeUoW = (): { run: (fn: (tx: UnitOfWork) => Promise<unknown>) => Promise<unknown> } => ({
+  run: vi.fn(async (fn: (tx: UnitOfWork) => Promise<unknown>) => fn(mockTx)),
+});
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 

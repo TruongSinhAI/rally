@@ -32,7 +32,7 @@ with the actual codebase state.
 |-------|--------|
 | `tsc --noEmit` | ✅ 0 errors |
 | `eslint` | ✅ Clean |
-| `vitest run` | ✅ 22 suites, 498 tests passed |
+| `vitest run` | ✅ 27 suites, 530 tests passed |
 | `nest build api` | ✅ Clean |
 | `nest build worker` | ✅ Clean |
 
