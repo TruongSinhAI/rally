@@ -468,9 +468,9 @@ export function TeamStatusPage() {
               canEdit={canEdit}
               colStyles={colStyles}
               members={members}
-              onOpenItem={(itemKey) => {
-                if (itemKey) navigate({ to: '/item/$itemKey', params: { itemKey } })
-              }}
+              onOpenTask={(task) =>
+                navigate({ to: '/item/$itemKey', params: { itemKey: task.taskKey } })
+              }
             />
           ))}
 

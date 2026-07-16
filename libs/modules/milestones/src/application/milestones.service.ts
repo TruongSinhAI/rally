@@ -317,6 +317,19 @@ export class MilestonesService {
       milestone.projectId,
       PERMISSION.MILESTONE_MANAGE,
     );
+    // P3.3: Milestone Artifacts must be Story/Defect work items only.
+    if (workItemIds.length > 0) {
+      const invalidItems = await this.milestoneRepo.findNonStoryDefectIds(
+        workItemIds,
+        actor.workspaceId,
+      );
+      if (invalidItems.length > 0) {
+        throw new BadRequestException(
+          'MILESTONE_ARTIFACT_INVALID_TYPE',
+          `Only Story and Defect work items can be linked as milestone artifacts. Invalid IDs: ${invalidItems.join(', ')}`,
+        );
+      }
+    }
     await this.milestoneRepo.setArtifactLinks(milestoneId, workItemIds);
     return this.milestoneRepo.getArtifactIds(milestoneId);
   }

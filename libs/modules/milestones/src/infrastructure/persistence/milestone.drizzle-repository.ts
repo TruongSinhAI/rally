@@ -1,8 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { and, eq, lt, sql, inArray } from 'drizzle-orm';
+import { and, eq, lt, sql, inArray, isNull } from 'drizzle-orm';
 import { InjectDrizzle, buildPageResult } from '@platform';
 import type { DrizzleDB, CursorPayload, PagedResult } from '@platform';
 import {
+  workItems,
   milestones,
   milestoneReleases,
   milestoneProjects,
@@ -207,6 +208,22 @@ export class MilestoneDrizzleRepository implements IMilestoneRepository {
         .insert(milestoneArtifacts)
         .values(workItemIds.map((workItemId) => ({ milestoneId, workItemId })));
     }
+  }
+
+  async findNonStoryDefectIds(ids: string[], workspaceId: string): Promise<string[]> {
+    if (ids.length === 0) return [];
+    const rows = await this.db
+      .select({ id: workItems.id })
+      .from(workItems)
+      .where(
+        and(
+          inArray(workItems.id, ids),
+          eq(workItems.workspaceId, workspaceId),
+          isNull(workItems.deletedAt),
+          sql`type NOT IN ('story', 'defect')`,
+        ),
+      );
+    return rows.map((r) => r.id);
   }
 
   async deriveTargetDates(

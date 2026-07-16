@@ -29,4 +29,6 @@ export interface IMilestoneRepository {
   setTeamLinks(milestoneId: string, teamIds: string[]): Promise<void>;
   getArtifactIds(milestoneId: string): Promise<string[]>;
   setArtifactLinks(milestoneId: string, workItemIds: string[]): Promise<void>;
+  /** Return IDs from the input list that are NOT story or defect type. */
+  findNonStoryDefectIds(ids: string[], workspaceId: string): Promise<string[]>;
 }

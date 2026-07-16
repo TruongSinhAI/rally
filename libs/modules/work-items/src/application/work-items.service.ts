@@ -499,16 +499,19 @@ export class WorkItemsService {
     }
     if (input.releaseId) {
       await this.assertReleaseAssignable(actor.workspaceId, item.projectId, input.releaseId);
+      // P3.2: enforce one-active-release-per-item constraint
+      await this.assertSingleActiveRelease(actor.workspaceId, item.id, input.releaseId);
     }
 
     // P3.4 — Validate defect state transitions
+    // Reopen from Closed / Closed Declined is deferred per handoff §4.7.
     if (input.defectState !== undefined && input.defectState !== null && item.defectState) {
       const validTransitions: Record<string, string[]> = {
         submitted: ['open', 'closed_declined'],
         open: ['fixed'],
         fixed: ['closed'],
-        closed: ['open'],
-        closed_declined: ['open'],
+        closed: [],
+        closed_declined: [],
       };
       const allowed = validTransitions[item.defectState] ?? [];
       if (!allowed.includes(input.defectState)) {
@@ -603,7 +606,14 @@ export class WorkItemsService {
 
   @Span('work-items.delete')
   async deleteWorkItem(actor: JwtPayload, id: string): Promise<void> {
-    await this.getWorkItemForWrite(actor, id, PERMISSION.WORK_ITEM_DELETE);
+    const item = await this.getWorkItemForWrite(actor, id, PERMISSION.WORK_ITEM_DELETE);
+    // P3.4: Defects must not be deleted — use Closed or Closed Declined instead.
+    if (item.type === 'defect') {
+      throw new PreconditionFailedException(
+        'DEFECT_DELETE_FORBIDDEN',
+        'Defects cannot be deleted. Use Closed or Closed Declined state instead.',
+      );
+    }
     await this.workItemRepo.softDelete(id, actor.workspaceId);
     this.logger.log({ workItemId: id }, 'Work item soft-deleted');
   }
@@ -845,6 +855,24 @@ export class WorkItemsService {
         'RELEASE_PROJECT_MISMATCH',
         'Release must belong to the same project as the work item',
       );
+    }
+  }
+
+  /** P3.2: A Story/Defect can be assigned to only one active Release at a time. */
+  private async assertSingleActiveRelease(
+    workspaceId: string,
+    workItemId: string,
+    targetReleaseId: string,
+  ): Promise<void> {
+    const currentReleaseId = await this.workItemRepo.findCurrentReleaseId(workItemId, workspaceId);
+    if (currentReleaseId && currentReleaseId !== targetReleaseId) {
+      const currentStatus = await this.workItemRepo.findReleaseStatus(currentReleaseId, workspaceId);
+      if (currentStatus === 'active') {
+        throw new PreconditionFailedException(
+          'ACTIVE_RELEASE_CONFLICT',
+          'Work item is already assigned to an active Release. Reassigning replaces the previous assignment.',
+        );
+      }
     }
   }
 
