@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { and, desc, eq, count } from 'drizzle-orm';
+import { and, desc, eq, count, or } from 'drizzle-orm';
 import { InjectDrizzle } from '@platform';
 import type { DrizzleDB, DbExecutor } from '@platform';
 import { activityLogs } from '../../../../../../db/schema/work';
@@ -39,7 +39,16 @@ export class ActivityLogDrizzleRepository implements IActivityLogRepository {
     workspaceId: string,
     { limit, offset }: { limit: number; offset: number },
   ): Promise<{ items: ActivityLog[]; total: number }> {
-    const where = and(eq(activityLogs.workItemId, workItemId), eq(activityLogs.workspaceId, workspaceId));
+    // Activities for the work item itself (directly anchored to it)
+    // OR activities where this item is the entity (task events anchored
+    // to the parent but bearing this task's entityId).
+    const where = and(
+      eq(activityLogs.workspaceId, workspaceId),
+      or(
+        eq(activityLogs.workItemId, workItemId),
+        eq(activityLogs.entityId, workItemId),
+      ),
+    );
 
     const [rows, totalRows] = await Promise.all([
       this.db

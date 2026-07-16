@@ -143,6 +143,24 @@ export class WorkItemDrizzleRepository implements IWorkItemRepository {
     return rows[0]?.projectId ?? null;
   }
 
+  async findCurrentReleaseId(workItemId: string, workspaceId: string): Promise<string | null> {
+    const rows = await this.db
+      .select({ releaseId: workItems.releaseId })
+      .from(workItems)
+      .where(and(eq(workItems.id, workItemId), eq(workItems.workspaceId, workspaceId), isNull(workItems.deletedAt)))
+      .limit(1);
+    return rows[0]?.releaseId ?? null;
+  }
+
+  async findReleaseStatus(releaseId: string, workspaceId: string): Promise<string | null> {
+    const rows = await this.db
+      .select({ status: releases.status })
+      .from(releases)
+      .where(and(eq(releases.id, releaseId), eq(releases.workspaceId, workspaceId)))
+      .limit(1);
+    return rows[0]?.status ?? null;
+  }
+
   async assignIteration(
     ids: string[],
     iterationId: string | null,

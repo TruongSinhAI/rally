@@ -23,6 +23,10 @@ export interface IWorkItemRepository {
   findIterationScope(iterationId: string, workspaceId: string): Promise<IterationScope | null>;
   /** Project id owning a release, or null if not found for this workspace. */
   findReleaseProject(releaseId: string, workspaceId: string): Promise<string | null>;
+  /** Current releaseId on a work item, or null. */
+  findCurrentReleaseId(workItemId: string, workspaceId: string): Promise<string | null>;
+  /** Status of a release, or null if not found. */
+  findReleaseStatus(releaseId: string, workspaceId: string): Promise<string | null>;
   /** Bulk-assign iteration (null unassigns) to the given ids. All-or-nothing via caller UoW. */
   assignIteration(
     ids: string[],

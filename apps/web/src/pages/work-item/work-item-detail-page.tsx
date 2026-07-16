@@ -7,7 +7,7 @@
  * Sidebar differs by type (task shows time fields + Work Product link).
  */
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { useParams, useNavigate } from '@tanstack/react-router'
+import { useParams, useNavigate, Link, useQueryClient } from '@tanstack/react-router'
 import {
   Bell,
   BellOff,
@@ -35,6 +35,7 @@ import {
   useDeleteWorkItem,
   useChildDefects,
   useBacklog,
+  workItemKeys,
   type WorkItem,
 } from '@/features/work-items/api'
 import { useReleases } from '@/features/releases/api'
@@ -71,6 +72,9 @@ import { AddTaskModal } from '@/features/work-items/ui/add-task-modal'
 import { RichTextEditor } from '@/shared/ui/rich-text-editor'
 import { AttachmentBlock } from '@/features/collaboration/ui/attachment-block'
 import { Spinner } from '@/shared/ui/spinner'
+import { InlineEditableCell } from '@/shared/ui/inline-editable-cell'
+import { apiClient } from '@/shared/api/http-client'
+import { apiErrorMessage } from '@/shared/api/api-error'
 import { useSaveState } from '@/shared/lib/hooks/use-save-state'
 import { SaveIndicator } from '@/shared/ui/save-indicator'
 
@@ -228,13 +232,17 @@ const TASK_COLS = [
 function TasksTab({ workItemId, projectId }: { workItemId: string; projectId: string }) {
   const { data: tasks = [], isLoading } = useTasks(workItemId)
   const { data: totals } = useTaskTotals(workItemId)
-  // Tasks inherit their parent's project; team/owner names are resolved for display.
   const { data: teams = [] } = useProjectTeams(projectId)
   const { data: members = [] } = useProjectMembers(projectId)
   const { project } = useAppContext()
   const projectLabel = project?.projectKey ?? project?.projectName ?? '—'
   const [showAdd, setShowAdd] = useState(false)
   const navigate = useNavigate()
+
+  // §4.3: Task Dashboard inline edit — gated by work_item:edit permission
+  const { can } = useProjectPermissions(projectId)
+  const canEdit = can('work_item:edit')
+  const qc = useQueryClient()
 
   const teamName = (id?: string | null) =>
     id ? (teams.find((t) => t.id === id)?.name ?? '—') : '—'
@@ -244,6 +252,32 @@ function TasksTab({ workItemId, projectId }: { workItemId: string; projectId: st
   function openTask(task: WorkItem) {
     void navigate({ to: '/item/$itemKey', params: { itemKey: task.itemKey } })
   }
+
+  // Task states: Defined → In Progress → Completed
+  const TASK_STATES = [
+    { value: 'defined', label: 'D' },
+    { value: 'in_progress', label: 'I' },
+    { value: 'completed', label: 'C' },
+  ] as const
+
+  // Direct API call for inline edits — avoids hooks-inside-callbacks violation.
+  const commitField = useCallback(
+    async (taskId: string, field: string, value: unknown) => {
+      try {
+        const patch: Record<string, unknown> = { [field]: value ?? null }
+        await apiClient.PATCH('/v1/work-items/{id}', {
+          params: { path: { id: taskId } },
+          body: patch as Parameters<ReturnType<typeof useUpdateWorkItem>['mutateAsync']>[0],
+        })
+        // Invalidate parent task list + totals so the table reflects changes
+        void qc.invalidateQueries({ queryKey: workItemKeys.tasks(workItemId) })
+        void qc.invalidateQueries({ queryKey: workItemKeys.taskTotals(workItemId) })
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Failed to update task')
+      }
+    },
+    [workItemId, qc],
+  )
 
   return (
     <div className="w-full">
@@ -338,18 +372,18 @@ function TasksTab({ workItemId, projectId }: { workItemId: string; projectId: st
               </div>
             )}
 
-            {/* Task rows */}
+            {/* §4.3: Task Dashboard rows with inline editing */}
             {tasks.map((task) => (
               <div
                 key={task.id}
-                className="grid min-h-10 cursor-pointer items-center text-[12px] hover:bg-[#f1f6fc]"
+                className="grid min-h-10 items-center text-[12px] hover:bg-[#f7f8fa]"
                 style={{
                   gridTemplateColumns: TASK_GRID,
                   borderBottom: '1px solid #edf0f4',
                   color: '#334155',
                 }}
-                onClick={() => openTask(task)}
               >
+                {/* Checkbox — stopPropagation to prevent row navigation */}
                 <div className="flex items-center justify-center">
                   <input
                     type="checkbox"
@@ -358,33 +392,145 @@ function TasksTab({ workItemId, projectId }: { workItemId: string; projectId: st
                     onClick={(e) => e.stopPropagation()}
                   />
                 </div>
+                {/* Rank — read-only */}
                 <span className="px-3 font-mono text-[11px]" style={{ color: '#5c6478' }}>
                   {task.rank ?? '—'}
                 </span>
-                <span className="flex items-center overflow-hidden px-3">
-                  <IdCell type={task.type} itemKey={task.itemKey} onOpen={() => openTask(task)} />
+                {/* ID — clickable to open task detail */}
+                <span className="flex items-center gap-1 px-3">
+                  <TypeBadge type={task.type} />
+                  <button
+                    className="font-mono text-[11px] hover:underline"
+                    style={{ color: '#2558a6' }}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      openTask(task)
+                    }}
+                  >
+                    {task.itemKey}
+                  </button>
                 </span>
-                <span className="truncate px-3 font-medium">{task.title}</span>
+                {/* Name — inline editable */}
+                <span className="truncate px-3 font-medium">
+                  <InlineEditableCell
+                    value={task.title ?? ''}
+                    canEdit={canEdit}
+                    onCommit={(val) => {
+                      if (val.trim()) commitField(task.id, 'title', val.trim())
+                    }}
+                    trigger="dblclick"
+                    className="block truncate"
+                    style={{ color: '#334155' }}
+                    inputClassName="w-full text-[12px] px-1 py-0.5 rounded"
+                    inputStyle={{ border: '1px solid #9fb4d1', backgroundColor: 'white' }}
+                    ariaLabel="Task name"
+                  />
+                </span>
+                {/* State — inline 3-button selector (D / I / C) */}
                 <span className="px-3">
-                  <ScheduleStateBadge state={task.scheduleState} />
+                  {canEdit ? (
+                    <div className="flex items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
+                      {TASK_STATES.map((s) => (
+                        <button
+                          key={s.value}
+                          className="h-6 w-6 rounded text-[10px] font-bold transition-colors"
+                          style={{
+                            backgroundColor: task.scheduleState === s.value ? '#2558a6' : '#f3f6fa',
+                            color: task.scheduleState === s.value ? 'white' : '#5c6478',
+                            border: `1px solid ${task.scheduleState === s.value ? '#2558a6' : '#d7dde7'}`,
+                          }}
+                          title={s.label}
+                          onClick={() => commitField(task.id, 'scheduleState', s.value)}
+                        >
+                          {s.label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <ScheduleStateBadge state={task.scheduleState} dot />
+                  )}
                 </span>
-                <span className="flex items-center overflow-hidden px-3">
-                  <OwnerCell name={task.assigneeId ? ownerName(task.assigneeId) : null} />
+                {/* Owner — inline editable via select */}
+                <span className="truncate px-3" onClick={(e) => e.stopPropagation()}>
+                  {canEdit ? (
+                    <select
+                      className="w-full truncate rounded border bg-transparent px-1 py-0.5 text-[12px] outline-none focus:border-[#2558a6]"
+                      style={{ color: '#5c6478', borderColor: '#d7dde7' }}
+                      value={task.assigneeId ?? ''}
+                      onChange={(e) => commitField(task.id, 'assigneeId', e.target.value || null)}
+                    >
+                      <option value="">—</option>
+                      {members.map((m) => (
+                        <option key={m.userId} value={m.userId}>
+                          {m.displayName}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span style={{ color: '#5c6478' }}>{ownerName(task.assigneeId)}</span>
+                  )}
                 </span>
+                {/* Project — read-only (inherited from parent) */}
                 <span className="truncate px-3" style={{ color: '#5c6478' }}>
                   {projectLabel}
                 </span>
+                {/* Teams — read-only (inherited) */}
                 <span className="truncate px-3" style={{ color: '#5c6478' }}>
                   {teamName(task.teamId)}
                 </span>
-                <span className="px-3 text-right font-mono">
-                  {task.todoHours != null ? `${task.todoHours}h` : '—'}
+                {/* To Do — inline editable hours */}
+                <span className="px-3 text-right font-mono" onClick={(e) => e.stopPropagation()}>
+                  <InlineEditableCell
+                    value={task.todoHours != null ? String(task.todoHours) : ''}
+                    canEdit={canEdit}
+                    onCommit={(val) => {
+                      const n = parseFloat(val)
+                      commitField(task.id, 'todoHours', isNaN(n) || val.trim() === '' ? null : n)
+                    }}
+                    trigger="click"
+                    className="block text-right"
+                    style={{ color: '#334155' }}
+                    inputClassName="w-14 text-right text-[12px] px-1 py-0.5 rounded"
+                    inputStyle={{ border: '1px solid #9fb4d1', backgroundColor: 'white' }}
+                    displayValue={task.todoHours != null ? `${task.todoHours}h` : '—'}
+                    ariaLabel="To Do hours"
+                  />
                 </span>
-                <span className="px-3 text-right font-mono">
-                  {task.actualHours != null ? `${task.actualHours}h` : '—'}
+                {/* Actuals — inline editable hours */}
+                <span className="px-3 text-right font-mono" onClick={(e) => e.stopPropagation()}>
+                  <InlineEditableCell
+                    value={task.actualHours != null ? String(task.actualHours) : ''}
+                    canEdit={canEdit}
+                    onCommit={(val) => {
+                      const n = parseFloat(val)
+                      commitField(task.id, 'actualHours', isNaN(n) || val.trim() === '' ? null : n)
+                    }}
+                    trigger="click"
+                    className="block text-right"
+                    style={{ color: '#334155' }}
+                    inputClassName="w-14 text-right text-[12px] px-1 py-0.5 rounded"
+                    inputStyle={{ border: '1px solid #9fb4d1', backgroundColor: 'white' }}
+                    displayValue={task.actualHours != null ? `${task.actualHours}h` : '—'}
+                    ariaLabel="Actual hours"
+                  />
                 </span>
-                <span className="px-3 text-right font-mono">
-                  {task.estimateHours != null ? `${task.estimateHours}h` : '—'}
+                {/* Estimate — inline editable hours */}
+                <span className="px-3 text-right font-mono" onClick={(e) => e.stopPropagation()}>
+                  <InlineEditableCell
+                    value={task.estimateHours != null ? String(task.estimateHours) : ''}
+                    canEdit={canEdit}
+                    onCommit={(val) => {
+                      const n = parseFloat(val)
+                      commitField(task.id, 'estimateHours', isNaN(n) || val.trim() === '' ? null : n)
+                    }}
+                    trigger="click"
+                    className="block text-right"
+                    style={{ color: '#334155' }}
+                    inputClassName="w-14 text-right text-[12px] px-1 py-0.5 rounded"
+                    inputStyle={{ border: '1px solid #9fb4d1', backgroundColor: 'white' }}
+                    displayValue={task.estimateHours != null ? `${task.estimateHours}h` : '—'}
+                    ariaLabel="Estimate hours"
+                  />
                 </span>
               </div>
             ))}
@@ -1194,7 +1340,8 @@ export function WorkItemDetailPage() {
                 className="absolute top-full right-0 z-50 mt-1 w-44 overflow-hidden rounded shadow-lg"
                 style={{ backgroundColor: 'white', border: '1px solid #d7dde7' }}
               >
-                {!readOnly && (
+                {/* P3.4: Defects must not be deleted — use Closed or Closed Declined. */}
+                {!readOnly && item?.type !== 'defect' && (
                   <button
                     onClick={() => void handleDelete()}
                     disabled={deleteMutation.isPending}

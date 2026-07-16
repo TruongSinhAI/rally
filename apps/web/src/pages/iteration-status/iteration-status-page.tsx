@@ -2,22 +2,16 @@
  * Track › Iteration Status — Azure DevOps-style layout
  *
  * Tracking view over the work items assigned to one selected iteration:
- * a single page header (title + iteration selector prev/next + dropdown + view
- * toggle), a metric strip (from the backend read-model), and an editable
- * work-item list. Sourced from /v1/iterations/:id/status.
+ * breadcrumb bar, view mode toggle, iteration selector (prev/next + dropdown),
+ * metric strip (from the backend read-model), and an editable work-item list.
+ * Sourced from /v1/iterations/:id/status.
  */
 /* eslint-disable react-hooks/set-state-in-effect */
-import { useMemo, useState, useCallback, useEffect, useRef } from 'react'
-import { createPortal } from 'react-dom'
+import { useMemo, useState, useCallback, useEffect } from 'react'
 import { useColumnLayout, type ColumnDef } from '@/shared/lib/hooks/use-column-layout'
-import { useColumnDrag } from '@/shared/lib/hooks/use-column-drag'
 import { ColumnFieldsMenu } from '@/shared/ui/column-fields-menu'
-import { PageToolbar } from '@/shared/ui/page-toolbar'
-import { DataTableHeader, type DataTableHeaderColumn } from '@/shared/ui/data-table-header'
 import { InlineEditableCell } from '@/shared/ui/inline-editable-cell'
-import { OwnerSelectCell } from '@/shared/ui/owner-cell'
-import { RowGutter } from '@/shared/ui/row-gutter'
-import { MetricCard } from '@/shared/ui/metric-card'
+import { ResizeHandle } from '@/shared/ui/resize-handle'
 import { toast } from 'sonner'
 import { useNavigate } from '@tanstack/react-router'
 import {
@@ -36,27 +30,24 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import {
+  Search,
   Plus,
+  Filter,
   ChevronLeft,
   ChevronRight,
   ChevronDown,
+  ChevronUp,
   Loader2,
   Bug,
   ListChecks,
   BarChart3,
-  Trash2,
+  GripVertical,
 } from 'lucide-react'
 import { STORAGE_KEYS } from '@/shared/config/storage-keys'
 import { SkeletonList } from '@/shared/ui/skeleton'
 import { BRAND } from '@/shared/config/brand'
-import { NESTED_ROW_INDENT } from '@/shared/config/layout'
-import { IdCell } from '@/entities/work-item/ui/id-cell'
+import { TypeBadge } from '@/entities/work-item/ui/badges'
 import { AppModal, ModalBody, ModalFooter } from '@/shared/ui/app-modal'
-import { InlineSelect } from '@/shared/ui/native-select'
-import { PaginationFooter } from '@/shared/ui/pagination-footer'
-import { BulkActionBar } from '@/shared/ui/bulk-action-bar'
-import { ConfirmDialog } from '@/shared/ui/confirm-dialog'
-import { useRowSelection } from '@/shared/lib/hooks/use-row-selection'
 import { FormField } from '@/shared/ui/form-field'
 import { Input } from '@/shared/ui/input'
 import { useAppContext } from '@/shared/lib/stores/app-context.store'
@@ -70,30 +61,27 @@ import {
 } from '@/features/iterations/api'
 import {
   useUpdateWorkItem,
-  useUpdateAnyWorkItem,
-  useDeleteWorkItem,
-  useBulkAssignIteration,
   useTasks,
   useRankAnyWorkItem,
-  useSetWorkItemMilestones,
   type WorkItem,
 } from '@/features/work-items/api'
 import { useProjectMembers } from '@/features/teams/api'
-import { useMilestones } from '@/features/milestones/api'
 import {
   SCHEDULE_STATE_LABEL,
   SCHEDULE_STATE_VALUES,
+  SCHEDULE_STATE_CONFIG,
   ScheduleState,
   getSimplifiedState,
+  SIMPLIFIED_STATE_LABEL,
+  SIMPLIFIED_STATE_CONFIG,
+  SIMPLIFIED_STATE_ORDER,
   SIMPLIFIED_STATE_TO_SCHEDULE_STATE,
 } from '@/entities/work-item/model/types'
-import { StateStepper } from '@/entities/work-item/ui/state-stepper'
-import { FeatureCell } from '@/entities/work-item/ui/feature-cell'
-import { SCHEDULE_STATE_STEPS, SIMPLIFIED_STATE_STEPS } from '@/entities/work-item/ui/state-steps'
 
 // ── Accent palette (Rally navy brand; neutral Azure-style layout kept) ──────
 const AZ = {
   primary: '#1d3f73',
+  primaryHover: '#162d56',
   primaryLight: '#edf2fb',
   textPrimary: '#1a1a1a',
   textSecondary: '#666666',
@@ -102,48 +90,50 @@ const AZ = {
   bgHeader: '#f4f4f4',
   bgAlt: '#f8f8f8',
   border: '#e8e8e8',
+  borderLight: '#eeeeee',
   font: "'Segoe UI', -apple-system, BlinkMacSystemFont, 'Roboto', sans-serif",
 }
 
 // Single-letter badge for each schedule state (read-only view)
+const STATE_LETTER: Record<ScheduleState, string> = {
+  idea: 'I',
+  defined: 'D',
+  ready: 'Rd',
+  in_progress: 'P',
+  completed: 'C',
+  accepted: 'A',
+  released: 'R',
+}
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 type ColKey =
   | 'rank'
   | 'id'
+  | 'type'
   | 'name'
-  | 'feature'
   | 'state'
   | 'block'
-  | 'blockedReason'
   | 'planEstimate'
   | 'taskEstimate'
   | 'toDo'
-  | 'tasksPct'
   | 'actual'
   | 'owner'
   | 'defects'
-  | 'defectStatus'
-  | 'milestones'
   | 'devOwner'
 
 const ITERATION_STATUS_COLUMNS: ColumnDef<ColKey>[] = [
-  { key: 'rank', label: 'Rank', defaultWidth: 45 },
-  { key: 'id', label: 'ID', defaultWidth: 132, minWidth: 120 },
-  { key: 'name', label: 'Name', defaultWidth: 240, minWidth: 150 },
-  { key: 'feature', label: 'Feature', defaultWidth: 200, minWidth: 120 },
-  { key: 'state', label: 'Schedule State', defaultWidth: 132, minWidth: 132 },
-  { key: 'block', label: 'Block', defaultWidth: 60, minWidth: 56 },
-  { key: 'blockedReason', label: 'Blocked Reason', defaultWidth: 160, minWidth: 100 },
+  { key: 'rank', label: '#', defaultWidth: 45, locked: true },
+  { key: 'id', label: 'ID', defaultWidth: 104, minWidth: 84, locked: true },
+  { key: 'type', label: 'Type', defaultWidth: 60, locked: true },
+  { key: 'name', label: 'Name', defaultWidth: 240, minWidth: 150, locked: true },
+  { key: 'state', label: 'State', defaultWidth: 112 },
+  { key: 'block', label: 'Block', defaultWidth: 42 },
   { key: 'planEstimate', label: 'Plan Estimate', defaultWidth: 80 },
   { key: 'taskEstimate', label: 'Task Estimate', defaultWidth: 80 },
   { key: 'toDo', label: 'To Do', defaultWidth: 70 },
-  { key: 'tasksPct', label: 'Tasks', defaultWidth: 110, minWidth: 80 },
   { key: 'actual', label: 'Actual', defaultWidth: 70 },
   { key: 'owner', label: 'Owner', defaultWidth: 130 },
   { key: 'defects', label: 'Defects', defaultWidth: 60 },
-  { key: 'defectStatus', label: 'Defect Status', defaultWidth: 100, minWidth: 80 },
-  { key: 'milestones', label: 'Milestones', defaultWidth: 140, minWidth: 90 },
   { key: 'devOwner', label: 'Dev Owner', defaultWidth: 130 },
 ]
 
@@ -152,10 +142,6 @@ const ITERATION_STATUS_COLUMNS: ColumnDef<ColKey>[] = [
 // `syncedItems !== sortedItems` reference-equality check below and causes an
 // infinite render loop ("Too many re-renders").
 const EMPTY_ITEMS: IterationStatusItem[] = []
-
-// Sentinel for the Owner filter's "Unassigned" option (empty string collides
-// with the native <select> placeholder, so use an explicit token).
-const OWNER_UNASSIGNED = '__unassigned__'
 
 function fmtRange(it: Pick<Iteration, 'startDate' | 'endDate'>) {
   const s = it.startDate ?? '—'
@@ -171,277 +157,6 @@ function computeTotalDays(it: Iteration | undefined): number {
   return Math.max(1, diff)
 }
 
-// ── Cell primitives (Rally-style chips / pills / progress) ──────────────────
-
-/**
- * Milestones cell — read-only chip summary, or (when editable) a click-to-open
- * checkbox popover to add/remove the work item's milestones. Each toggle
- * commits immediately (one PUT), matching the grid's inline-edit ethos.
- */
-function MilestoneSelectCell({
-  selected,
-  options,
-  canEdit,
-  saving,
-  onCommit,
-}: {
-  selected: readonly { id: string; name: string }[]
-  options: readonly { id: string; name: string }[]
-  canEdit: boolean
-  saving: boolean
-  onCommit: (ids: string[]) => void
-}) {
-  const [open, setOpen] = useState(false)
-  const [pos, setPos] = useState<{
-    left: number
-    width: number
-    top: number | null
-    bottom: number | null
-  } | null>(null)
-  const triggerRef = useRef<HTMLButtonElement>(null)
-  const popRef = useRef<HTMLDivElement>(null)
-  const selectedIds = useMemo(() => new Set(selected.map((s) => s.id)), [selected])
-
-  // The popover must escape the grid's overflow-hidden cells, so it renders in
-  // a portal with fixed positioning anchored to the trigger's viewport rect.
-  const computePos = useCallback(() => {
-    const el = triggerRef.current
-    if (!el) return
-    const r = el.getBoundingClientRect()
-    const spaceBelow = window.innerHeight - r.bottom
-    const flipUp = spaceBelow < 200 && r.top > spaceBelow
-    setPos({
-      left: r.left,
-      width: r.width,
-      top: flipUp ? null : r.bottom + 4,
-      bottom: flipUp ? window.innerHeight - r.top + 4 : null,
-    })
-  }, [])
-
-  useEffect(() => {
-    if (!open) return
-    computePos()
-    function reposition() {
-      computePos()
-    }
-    function onDocDown(e: MouseEvent) {
-      const t = e.target as Node
-      if (triggerRef.current?.contains(t)) return
-      if (popRef.current?.contains(t)) return
-      setOpen(false)
-    }
-    window.addEventListener('scroll', reposition, true)
-    window.addEventListener('resize', reposition)
-    document.addEventListener('mousedown', onDocDown)
-    return () => {
-      window.removeEventListener('scroll', reposition, true)
-      window.removeEventListener('resize', reposition)
-      document.removeEventListener('mousedown', onDocDown)
-    }
-  }, [open, computePos])
-
-  function toggle(id: string) {
-    const next = new Set(selectedIds)
-    if (next.has(id)) next.delete(id)
-    else next.add(id)
-    onCommit([...next])
-  }
-
-  // Span-based chip (not the <Chip> button) so it can live inside the trigger
-  // <button> without nesting interactive elements (invalid HTML / hydration).
-  const summary =
-    selected.length > 0 ? (
-      <>
-        <span
-          className="min-w-0 flex-1 truncate"
-          title={selected.map((m) => m.name).join(', ')}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            maxWidth: '100%',
-            height: 18,
-            padding: '0 6px',
-            borderRadius: 3,
-            fontSize: 11,
-            fontWeight: 600,
-            lineHeight: '18px',
-            border: `1px solid ${AZ.border}`,
-            backgroundColor: AZ.bgAlt,
-            color: AZ.textSecondary,
-            fontFamily: AZ.font,
-          }}
-        >
-          <span className="truncate">{selected[0].name}</span>
-        </span>
-        {selected.length > 1 && (
-          <span
-            className="shrink-0"
-            style={{ fontSize: 11, color: AZ.textMuted, whiteSpace: 'nowrap' }}
-            title={selected.map((m) => m.name).join(', ')}
-          >
-            +{selected.length - 1}
-          </span>
-        )}
-      </>
-    ) : (
-      <span style={{ color: AZ.textMuted, fontSize: 12 }}>&mdash;</span>
-    )
-
-  if (!canEdit) {
-    return <div className="flex items-center gap-1 overflow-hidden">{summary}</div>
-  }
-
-  return (
-    <div style={{ width: '100%' }}>
-      <button
-        ref={triggerRef}
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation()
-          setOpen((v) => !v)
-        }}
-        disabled={saving}
-        title="Edit milestones"
-        className="flex w-full items-center gap-1 overflow-hidden rounded"
-        style={{
-          background: open ? AZ.primaryLight : 'none',
-          border: 'none',
-          padding: '2px 4px',
-          cursor: saving ? 'default' : 'pointer',
-          opacity: saving ? 0.6 : 1,
-          textAlign: 'left',
-        }}
-      >
-        <span className="flex min-w-0 flex-1 items-center gap-1">{summary}</span>
-        <ChevronDown size={12} style={{ color: AZ.textMuted, flexShrink: 0 }} />
-      </button>
-      {open &&
-        pos &&
-        createPortal(
-          <div
-            ref={popRef}
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              position: 'fixed',
-              top: pos.top ?? undefined,
-              bottom: pos.bottom ?? undefined,
-              left: pos.left,
-              zIndex: 50,
-              minWidth: Math.max(200, pos.width),
-              maxWidth: 280,
-              maxHeight: 260,
-              overflowY: 'auto',
-              backgroundColor: AZ.bg,
-              border: `1px solid ${AZ.border}`,
-              borderRadius: 4,
-              boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
-              padding: 4,
-            }}
-          >
-            {options.length === 0 ? (
-              <div style={{ padding: '8px 10px', fontSize: 12, color: AZ.textMuted }}>
-                No milestones in this project
-              </div>
-            ) : (
-              options.map((opt) => {
-                const checked = selectedIds.has(opt.id)
-                return (
-                  <label
-                    key={opt.id}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      padding: '5px 8px',
-                      borderRadius: 3,
-                      fontSize: 12,
-                      color: AZ.textPrimary,
-                      cursor: 'pointer',
-                      fontFamily: AZ.font,
-                    }}
-                    onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = AZ.bgAlt)}
-                    onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggle(opt.id)}
-                      style={{ accentColor: AZ.primary, cursor: 'pointer' }}
-                    />
-                    <span className="truncate">{opt.name}</span>
-                  </label>
-                )
-              })
-            )}
-          </div>,
-          document.body,
-        )}
-    </div>
-  )
-}
-
-/** Rally "Defect Status" summary pill derived from child-defect counts. */
-function DefectStatusPill({ total, open }: { total: number; open: number }) {
-  if (total === 0) {
-    return <span style={{ fontSize: 12, color: AZ.textMuted }}>None</span>
-  }
-  const closed = open === 0
-  const bg = closed ? '#eaf7ee' : '#fdf3e7'
-  const fg = closed ? '#1c7a3f' : '#9a6410'
-  const bd = closed ? '#bfe6cd' : '#f0d9b5'
-  return (
-    <span
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        height: 18,
-        padding: '0 8px',
-        borderRadius: 9,
-        fontSize: 11,
-        fontWeight: 600,
-        backgroundColor: bg,
-        color: fg,
-        border: `1px solid ${bd}`,
-        fontFamily: AZ.font,
-      }}
-    >
-      {closed ? 'Closed' : `${open} Open`}
-    </span>
-  )
-}
-
-/** Thin task-completion bar computed from task estimate vs. remaining to-do. */
-function TasksProgress({ estimate, toDo }: { estimate: number; toDo: number }) {
-  if (!estimate || estimate <= 0) {
-    return <span style={{ fontSize: 12, color: AZ.textMuted }}>&mdash;</span>
-  }
-  const pct = Math.max(0, Math.min(100, Math.round(((estimate - toDo) / estimate) * 100)))
-  return (
-    <div className="flex w-full items-center gap-1.5" title={`${pct}% complete`}>
-      <div
-        style={{
-          flex: 1,
-          height: 6,
-          borderRadius: 3,
-          backgroundColor: AZ.border,
-          overflow: 'hidden',
-        }}
-      >
-        <div
-          style={{
-            width: `${pct}%`,
-            height: '100%',
-            backgroundColor: pct >= 100 ? '#1c7a3f' : AZ.primary,
-          }}
-        />
-      </div>
-      <span style={{ fontSize: 11, color: AZ.textSecondary, minWidth: 30, textAlign: 'right' }}>
-        {pct}%
-      </span>
-    </div>
-  )
-}
-
 // ── Main page ──────────────────────────────────────────────────────────────
 
 export function IterationStatusPage() {
@@ -454,7 +169,6 @@ export function IterationStatusPage() {
 
   const { data: iterations = [] } = useIterations(projectId)
   const { data: members = [] } = useProjectMembers(projectId)
-  const { data: milestoneOptions = [] } = useMilestones(projectId)
 
   const memberMap = useMemo(() => new Map(members.map((m) => [m.userId, m])), [members])
 
@@ -465,28 +179,11 @@ export function IterationStatusPage() {
   const [viewMode, setViewMode] = useState<'list' | 'board' | 'compact'>('list')
   const [sortCol, setSortCol] = useState<string | null>(null)
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
-  const [stateFilter, setStateFilter] = useState<ScheduleState | 'all'>('all')
-  const [ownerFilter, setOwnerFilter] = useState<string>('all')
-  const [blockedOnly, setBlockedOnly] = useState(false)
-  const [pageSize, setPageSize] = useState<number>(25)
-  const [page, setPage] = useState<number>(1)
 
   const { startResize, order, hidden, toggleVisible, reorder, styleFor } = useColumnLayout(
     ITERATION_STATUS_COLUMNS,
     STORAGE_KEYS.ITERATION_STATUS_COLUMNS,
   )
-
-  // Drag-to-reorder columns directly from their header cells (mirrors the
-  // Show Fields menu, but in-place). Delegates to `reorder` from useColumnLayout.
-  const {
-    activeDragKey,
-    dropIndicator,
-    handleDragStart: handleColDragStart,
-    handleDragOver: handleColDragOver,
-    handleDragLeave: handleColDragLeave,
-    handleDrop: handleColDrop,
-    handleDragEnd: handleColDragEnd,
-  } = useColumnDrag<ColKey>({ onReorder: reorder })
 
   useEffect(() => {
     if (projectId) {
@@ -535,42 +232,21 @@ export function IterationStatusPage() {
     if (next >= 0 && next < iterations.length) setSelectedId(iterations[next].id)
   }
 
-  const toggleSort = useCallback(
-    (col: string) => {
-      // NOTE: never nest a state setter inside another setter's updater —
-      // StrictMode double-invokes updaters, which would fire the toggle twice
-      // and cancel it out (symptom: "sort only works on the first click").
-      if (sortCol === col) {
+  const toggleSort = useCallback((col: string) => {
+    setSortCol((prev) => {
+      if (prev === col) {
         setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
-      } else {
-        setSortCol(col)
-        setSortDir('asc')
+        return col
       }
-    },
-    [sortCol],
-  )
-
-  // Client-side refinement on top of the server-side `q` search: Schedule
-  // State / Owner / Blocked filters applied to the loaded iteration items.
-  const filteredItems = useMemo(() => {
-    return items.filter((it) => {
-      if (stateFilter !== 'all' && it.scheduleState !== stateFilter) return false
-      if (ownerFilter === OWNER_UNASSIGNED && it.assigneeId != null) return false
-      if (
-        ownerFilter !== 'all' &&
-        ownerFilter !== OWNER_UNASSIGNED &&
-        it.assigneeId !== ownerFilter
-      )
-        return false
-      if (blockedOnly && !it.isBlocked) return false
-      return true
+      setSortDir('asc')
+      return col
     })
-  }, [items, stateFilter, ownerFilter, blockedOnly])
+  }, [])
 
   const sortedItems = useMemo(() => {
-    if (!sortCol) return filteredItems
+    if (!sortCol) return items
     const dir = sortDir === 'asc' ? 1 : -1
-    return [...filteredItems].sort((a, b) => {
+    return [...items].sort((a, b) => {
       let va: string | number
       let vb: string | number
       switch (sortCol) {
@@ -617,38 +293,16 @@ export function IterationStatusPage() {
       if (va > vb) return 1 * dir
       return 0
     })
-  }, [filteredItems, sortCol, sortDir])
-
-  // ── Client-side pagination ──────────────────────────────────────────────
-  // An iteration is a bounded dataset (the fetch loads the full sprint), so we
-  // paginate the already-loaded/sorted/filtered rows in the client. This keeps
-  // multi-column sort and rank drag working across the whole set while still
-  // giving an offset-style footer (Page N of M, total count).
-  const pageCount = Math.max(1, Math.ceil(sortedItems.length / pageSize))
-  // Snap back to the first page whenever the underlying view identity changes
-  // (project/iteration, search, filters, sort, or page size).
-  const pageResetKey = `${selectedId ?? ''}|${search}|${stateFilter}|${ownerFilter}|${blockedOnly}|${sortCol ?? ''}|${sortDir}|${pageSize}`
-  const [syncedPageKey, setSyncedPageKey] = useState(pageResetKey)
-  if (syncedPageKey !== pageResetKey) {
-    setSyncedPageKey(pageResetKey)
-    setPage(1)
-  }
-  const currentPage = Math.min(page, pageCount)
-  const pagedItems = useMemo(
-    () => sortedItems.slice((currentPage - 1) * pageSize, currentPage * pageSize),
-    [sortedItems, currentPage, pageSize],
-  )
-  const goPrevPage = useCallback(() => setPage((p) => Math.max(1, p - 1)), [])
-  const goNextPage = useCallback(() => setPage((p) => p + 1), [])
+  }, [items, sortCol, sortDir])
 
   // ── Rank drag-and-drop (only meaningful in default rank order) ──────────
   const rankMutation = useRankAnyWorkItem()
   const dndSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
-  const [localItems, setLocalItems] = useState<IterationStatusItem[]>(pagedItems)
-  const [syncedItems, setSyncedItems] = useState(pagedItems)
-  if (syncedItems !== pagedItems) {
-    setSyncedItems(pagedItems)
-    setLocalItems(pagedItems)
+  const [localItems, setLocalItems] = useState<IterationStatusItem[]>(sortedItems)
+  const [syncedItems, setSyncedItems] = useState(sortedItems)
+  if (syncedItems !== sortedItems) {
+    setSyncedItems(sortedItems)
+    setLocalItems(sortedItems)
   }
 
   function handleDragEnd(event: DragEndEvent) {
@@ -673,63 +327,6 @@ export function IterationStatusPage() {
     )
   }
 
-  // ── Bulk selection ──────────────────────────────────────────────
-  const selection = useRowSelection(localItems)
-  const bulkIteration = useBulkAssignIteration()
-  const bulkUpdate = useUpdateAnyWorkItem()
-  const deleteItem = useDeleteWorkItem()
-  const [bulkError, setBulkError] = useState<string | null>(null)
-  const [confirmDelete, setConfirmDelete] = useState(false)
-
-  async function removeSelectedFromIteration() {
-    if (!projectId || selection.count === 0) return
-    setBulkError(null)
-    try {
-      await bulkIteration.mutateAsync({
-        projectId,
-        itemIds: [...selection.selectedIds],
-        iterationId: null,
-      })
-      selection.clear()
-      toast.success('Removed from iteration')
-    } catch (e) {
-      setBulkError(e instanceof Error ? e.message : 'Failed to remove items from iteration')
-    }
-  }
-
-  async function setStateForSelected(next: ScheduleState) {
-    if (!projectId || selection.count === 0) return
-    setBulkError(null)
-    const ids = [...selection.selectedIds]
-    const results = await Promise.allSettled(
-      ids.map((id) => bulkUpdate.mutateAsync({ id, input: { scheduleState: next } })),
-    )
-    const failed = results.filter((r) => r.status === 'rejected').length
-    if (failed > 0) {
-      setBulkError(`${failed} of ${ids.length} updates failed`)
-    } else {
-      selection.clear()
-      toast.success(`Updated ${ids.length} item${ids.length === 1 ? '' : 's'}`)
-    }
-  }
-
-  async function deleteSelected() {
-    if (!projectId || selection.count === 0) return
-    setBulkError(null)
-    const ids = [...selection.selectedIds]
-    const results = await Promise.allSettled(
-      ids.map((id) => deleteItem.mutateAsync({ id, projectId })),
-    )
-    const failed = results.filter((r) => r.status === 'rejected').length
-    setConfirmDelete(false)
-    if (failed > 0) {
-      setBulkError(`${failed} of ${ids.length} deletions failed`)
-    } else {
-      selection.clear()
-      toast.success(`Deleted ${ids.length} item${ids.length === 1 ? '' : 's'}`)
-    }
-  }
-
   // ── Totals ─────────────────────────────────────────────────────────────
   const totals = useMemo(() => {
     let planEst = 0
@@ -749,48 +346,21 @@ export function IterationStatusPage() {
   const acceptedPct = metrics?.acceptedPercent ?? 0
   const daysLeft = metrics?.daysLeft ?? 0
   const tDays = computeTotalDays(selected)
-  // An iteration is finished once it's been accepted or explicitly completed —
-  // regardless of the raw end-date arithmetic (which reads 0/negative when past
-  // due and otherwise misleadingly shows "0 days left" on a done sprint).
-  const iterationDone = selected?.state === 'accepted' || selected?.completedAt != null
-  // Elapsed / total, capped at 100%; a finished iteration always shows full.
-  const iterationProgressPct = iterationDone
-    ? 100
-    : tDays > 0
-      ? Math.min(((tDays - Math.max(daysLeft, 0)) / tDays) * 100, 100)
-      : 0
-  // Single source of truth for the "Iteration End" widget value/label/colour so
-  // Done and Overdue states never degrade to a misleading "0 days left".
-  const iterationEnd: { value: string; label: string; color: string } = iterationDone
-    ? { value: 'Done', label: 'Completed', color: '#15803d' }
-    : metrics?.daysLeft == null
-      ? { value: '—', label: 'no end date', color: '#8a5808' }
-      : metrics.daysLeft < 0
-        ? {
-            value: String(Math.abs(metrics.daysLeft)),
-            label: metrics.daysLeft === -1 ? 'day overdue' : 'days overdue',
-            color: '#b91c1c',
-          }
-        : { value: String(metrics.daysLeft), label: `of ${tDays} days left`, color: '#8a5808' }
+  const iterationProgressPct = tDays > 0 ? ((tDays - Math.max(daysLeft, 0)) / tDays) * 100 : 0
 
   const colStyles = useMemo(
     () => ({
       rank: styleFor('rank', { flexShrink: 0 }),
       id: styleFor('id', { flexShrink: 0 }),
       name: styleFor('name', { flex: 1, minWidth: 150 }),
-      feature: styleFor('feature', { flexShrink: 0 }),
       state: styleFor('state', { flexShrink: 0 }),
       block: styleFor('block', { flexShrink: 0 }),
-      blockedReason: styleFor('blockedReason', { flexShrink: 0 }),
       planEstimate: styleFor('planEstimate', { flexShrink: 0 }),
       taskEstimate: styleFor('taskEstimate', { flexShrink: 0 }),
       toDo: styleFor('toDo', { flexShrink: 0 }),
-      tasksPct: styleFor('tasksPct', { flexShrink: 0 }),
       actual: styleFor('actual', { flexShrink: 0 }),
       owner: styleFor('owner', { flexShrink: 0 }),
       defects: styleFor('defects', { flexShrink: 0 }),
-      defectStatus: styleFor('defectStatus', { flexShrink: 0 }),
-      milestones: styleFor('milestones', { flexShrink: 0 }),
       devOwner: styleFor('devOwner', { flexShrink: 0 }),
     }),
     [styleFor],
@@ -844,8 +414,9 @@ export function IterationStatusPage() {
       className="flex flex-1 flex-col overflow-hidden"
       style={{ fontFamily: AZ.font, backgroundColor: AZ.bg, color: AZ.textPrimary, fontSize: 12 }}
     >
-      {/* ── Single page header: title + iteration picker + view toggle ────── */}
-      <IterationHeader
+      <TopBar viewMode={viewMode} setViewMode={setViewMode} />
+
+      <IterationSelectorBar
         iterations={iterations}
         selected={selected}
         selectedId={selectedId}
@@ -854,15 +425,28 @@ export function IterationStatusPage() {
         move={move}
         selectorOpen={selectorOpen}
         setSelectorOpen={setSelectorOpen}
-        viewMode={viewMode}
-        setViewMode={setViewMode}
       />
+
+      {/* ── 3. "Iteration Status" title ───────────────────────────────────── */}
+      <div
+        className="shrink-0 px-4"
+        style={{
+          height: 36,
+          display: 'flex',
+          alignItems: 'center',
+          borderBottom: `1px solid ${AZ.border}`,
+        }}
+      >
+        <span style={{ fontSize: 16, fontWeight: 700, color: AZ.textPrimary }}>
+          Iteration Status
+        </span>
+      </div>
 
       <MetricsStrip
         metrics={metrics}
         velocityPct={velocityPct}
         acceptedPct={acceptedPct}
-        iterationEnd={iterationEnd}
+        tDays={tDays}
         iterationProgressPct={iterationProgressPct}
       />
 
@@ -876,98 +460,16 @@ export function IterationStatusPage() {
         hidden={hidden}
         toggleVisible={toggleVisible}
         reorder={reorder}
-        stateFilter={stateFilter}
-        setStateFilter={setStateFilter}
-        ownerFilter={ownerFilter}
-        setOwnerFilter={setOwnerFilter}
-        blockedOnly={blockedOnly}
-        setBlockedOnly={setBlockedOnly}
-        members={members}
       />
-
-      {/* Bulk action bar (appears when rows are selected) */}
-      {selection.count > 0 && (
-        <BulkActionBar
-          selectedCount={selection.count}
-          error={bulkError}
-          onClear={() => {
-            selection.clear()
-            setBulkError(null)
-          }}
-        >
-          {canEdit && (
-            <>
-              <InlineSelect
-                value=""
-                disabled={bulkUpdate.isPending}
-                onChange={(e) => {
-                  if (!e.target.value) return
-                  void setStateForSelected(e.target.value as ScheduleState)
-                }}
-                className="w-auto"
-                aria-label="Set state for selected"
-              >
-                <option value="">Set State…</option>
-                {SCHEDULE_STATE_VALUES.map((s) => (
-                  <option key={s} value={s}>
-                    {SCHEDULE_STATE_LABEL[s as ScheduleState] ?? s}
-                  </option>
-                ))}
-              </InlineSelect>
-
-              <button
-                type="button"
-                onClick={() => void removeSelectedFromIteration()}
-                disabled={bulkIteration.isPending}
-                className="rounded px-2 py-1 text-[11px] font-medium transition-colors hover:bg-white disabled:opacity-50"
-                style={{ color: BRAND.primaryLight }}
-              >
-                Remove from Iteration
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setConfirmDelete(true)}
-                disabled={deleteItem.isPending}
-                className="flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium transition-colors hover:bg-white disabled:opacity-50"
-                style={{ color: BRAND.danger }}
-              >
-                <Trash2 size={12} />
-                Delete
-              </button>
-            </>
-          )}
-        </BulkActionBar>
-      )}
 
       {/* ── 6. Table ─────────────────────────────────────────────────────── */}
       <div className="flex flex-1 flex-col overflow-auto" style={{ backgroundColor: AZ.bg }}>
-        <DataTableHeader
-          columns={HEADER_META}
+        <TableHeaderRow
           colStyles={colStyles}
-          onResize={startResize}
-          className="pr-3 pl-1"
-          leading={
-            <RowGutter
-              dragDisabled
-              checkbox={{
-                checked: selection.allSelected,
-                indeterminate: selection.someSelected,
-                onChange: selection.toggleAll,
-                ariaLabel: 'Select all',
-              }}
-            />
-          }
-          sort={{ col: sortCol, dir: sortDir, onSort: toggleSort }}
-          columnDrag={{
-            activeDragKey,
-            dropIndicator,
-            onDragStart: handleColDragStart,
-            onDragOver: handleColDragOver,
-            onDragLeave: handleColDragLeave,
-            onDrop: handleColDrop,
-            onDragEnd: handleColDragEnd,
-          }}
+          sortCol={sortCol}
+          sortDir={sortDir}
+          toggleSort={toggleSort}
+          startResize={startResize}
         />
 
         {/* Rows */}
@@ -996,15 +498,12 @@ export function IterationStatusPage() {
                 <StatusRow
                   key={item.id}
                   item={item}
-                  rank={(currentPage - 1) * pageSize + idx + 1}
+                  rank={idx + 1}
                   memberMap={memberMap}
-                  milestoneOptions={milestoneOptions}
                   selectedIterationId={selectedId!}
                   canEdit={canEdit}
                   colStyles={colStyles}
                   dragEnabled={!sortCol}
-                  selected={selection.isSelected(item.id)}
-                  onToggleSelect={() => selection.toggle(item.id)}
                   onOpen={() =>
                     navigate({
                       to: '/item/$itemKey',
@@ -1031,22 +530,6 @@ export function IterationStatusPage() {
         )}
       </div>
 
-      {!isLoading && !isError && sortedItems.length > 0 && (
-        <PaginationFooter
-          pageSize={pageSize}
-          setPageSize={setPageSize}
-          currentPage={currentPage}
-          rangeStart={(currentPage - 1) * pageSize + 1}
-          rangeEnd={(currentPage - 1) * pageSize + pagedItems.length}
-          total={sortedItems.length}
-          pageCount={pageCount}
-          hasPrevPage={currentPage > 1}
-          hasNextPage={currentPage < pageCount}
-          onPrevPage={goPrevPage}
-          onNextPage={goNextPage}
-        />
-      )}
-
       {/* ── Add Item modal ───────────────────────────────────────────────── */}
       {showAdd && selected && (
         <AddItemModal
@@ -1055,30 +538,70 @@ export function IterationStatusPage() {
           onCreated={() => setShowAdd(false)}
         />
       )}
-
-      <ConfirmDialog
-        open={confirmDelete}
-        title={`Delete ${selection.count} item${selection.count === 1 ? '' : 's'}?`}
-        message="This permanently removes the selected work items from the project. This action cannot be undone."
-        confirmLabel="Delete"
-        destructive
-        pending={deleteItem.isPending}
-        onConfirm={() => void deleteSelected()}
-        onCancel={() => setConfirmDelete(false)}
-      />
     </div>
   )
 }
 
-// ── Iteration page header (title + iteration picker + view-mode toggle) ─────
-//
-// Rally's Iteration Status page leads with the iteration picker and a progress
-// banner — it does NOT stack a redundant in-page breadcrumb (the app shell
-// already renders "Project › Iteration"). We fold the page title, the sprint
-// selector (prev/next + dropdown + date range) and the list/board/compact
-// toggle into a SINGLE header row so "Iteration" isn't repeated four times.
+// ── Breadcrumb / view-mode toggle bar ───────────────────────────────────────
 
-function IterationHeader({
+function TopBar({
+  viewMode,
+  setViewMode,
+}: {
+  viewMode: 'list' | 'board' | 'compact'
+  setViewMode: (mode: 'list' | 'board' | 'compact') => void
+}) {
+  return (
+    <div
+      className="flex shrink-0 items-center px-4"
+      style={{
+        height: 32,
+        borderBottom: `1px solid ${AZ.border}`,
+        backgroundColor: AZ.bg,
+      }}
+    >
+      <span style={{ fontWeight: 700, fontSize: 13, color: AZ.textPrimary }}>Iteration</span>
+      <span style={{ margin: '0 8px', color: AZ.textMuted, fontSize: 13 }}>&rsaquo;</span>
+      <span style={{ fontSize: 12, color: AZ.textMuted }}>Children</span>
+      <div className="flex-1" />
+      {/* View mode toggles */}
+      <div
+        className="flex items-center"
+        style={{ border: `1px solid ${AZ.border}`, borderRadius: 2, overflow: 'hidden' }}
+      >
+        {(['list', 'board', 'compact'] as const).map((mode) => (
+          <button
+            key={mode}
+            onClick={() => setViewMode(mode)}
+            style={{
+              padding: '3px 12px',
+              fontSize: 11,
+              fontWeight: 600,
+              border: 'none',
+              cursor: 'pointer',
+              backgroundColor: viewMode === mode ? AZ.primary : 'transparent',
+              color: viewMode === mode ? '#fff' : AZ.textSecondary,
+              fontFamily: AZ.font,
+              textTransform: 'capitalize' as const,
+            }}
+            onMouseOver={(e) => {
+              if (viewMode !== mode) e.currentTarget.style.backgroundColor = AZ.bgAlt
+            }}
+            onMouseOut={(e) => {
+              if (viewMode !== mode) e.currentTarget.style.backgroundColor = 'transparent'
+            }}
+          >
+            {mode}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── Iteration selector bar (prev/next + dropdown) ───────────────────────────
+
+function IterationSelectorBar({
   iterations,
   selected,
   selectedId,
@@ -1087,8 +610,6 @@ function IterationHeader({
   move,
   selectorOpen,
   setSelectorOpen,
-  viewMode,
-  setViewMode,
 }: {
   iterations: Iteration[]
   selected: Iteration | undefined
@@ -1098,20 +619,18 @@ function IterationHeader({
   move: (dir: -1 | 1) => void
   selectorOpen: boolean
   setSelectorOpen: React.Dispatch<React.SetStateAction<boolean>>
-  viewMode: 'list' | 'board' | 'compact'
-  setViewMode: (mode: 'list' | 'board' | 'compact') => void
 }) {
   return (
     <div
-      className="flex shrink-0 items-center gap-3 px-4"
+      className="flex shrink-0 items-center gap-2 px-4"
       style={{
-        height: 44,
+        height: 36,
         borderBottom: `1px solid ${AZ.border}`,
         backgroundColor: AZ.bg,
       }}
     >
-      <span style={{ fontSize: 16, fontWeight: 700, color: AZ.textPrimary, whiteSpace: 'nowrap' }}>
-        Iteration Status
+      <span style={{ fontSize: 12, fontWeight: 600, color: AZ.textPrimary, whiteSpace: 'nowrap' }}>
+        Iteration
       </span>
       <div
         className="flex items-center"
@@ -1255,36 +774,23 @@ function IterationHeader({
         </button>
       </div>
       <div className="flex-1" />
-      {/* View-mode toggle (list / board / compact) */}
+      {/* Saved Views dropdown placeholder */}
       <div
-        className="flex items-center"
-        style={{ border: `1px solid ${AZ.border}`, borderRadius: 2, overflow: 'hidden' }}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          padding: '4px 10px',
+          border: `1px solid ${AZ.border}`,
+          borderRadius: 2,
+          color: AZ.textMuted,
+          fontSize: 11,
+          height: 28,
+          cursor: 'pointer',
+        }}
       >
-        {(['list', 'board', 'compact'] as const).map((mode) => (
-          <button
-            key={mode}
-            onClick={() => setViewMode(mode)}
-            style={{
-              padding: '3px 12px',
-              fontSize: 11,
-              fontWeight: 600,
-              border: 'none',
-              cursor: 'pointer',
-              backgroundColor: viewMode === mode ? AZ.primary : 'transparent',
-              color: viewMode === mode ? '#fff' : AZ.textSecondary,
-              fontFamily: AZ.font,
-              textTransform: 'capitalize' as const,
-            }}
-            onMouseOver={(e) => {
-              if (viewMode !== mode) e.currentTarget.style.backgroundColor = AZ.bgAlt
-            }}
-            onMouseOut={(e) => {
-              if (viewMode !== mode) e.currentTarget.style.backgroundColor = 'transparent'
-            }}
-          >
-            {mode}
-          </button>
-        ))}
+        <span>Saved Views</span>
+        <ChevronDown size={12} />
       </div>
     </div>
   )
@@ -1296,13 +802,13 @@ function MetricsStrip({
   metrics,
   velocityPct,
   acceptedPct,
-  iterationEnd,
+  tDays,
   iterationProgressPct,
 }: {
   metrics: import('@/features/iterations/api').IterationStatus['metrics'] | undefined
   velocityPct: number
   acceptedPct: number
-  iterationEnd: { value: string; label: string; color: string }
+  tDays: number
   iterationProgressPct: number
 }) {
   return (
@@ -1315,33 +821,136 @@ function MetricsStrip({
         gap: 24,
       }}
     >
-      {/* Left side: KPI cards from the iteration read-model */}
+      {/* Left side: 3 metric cards with progress bars */}
       <div className="flex items-stretch" style={{ gap: 32, flex: 1 }}>
-        <MetricCard
-          label="Planned Velocity"
-          value={`${velocityPct}%`}
-          caption={`${metrics?.totalPlanEstimate ?? 0} of ${metrics?.plannedVelocity ?? 0} Points`}
-          progressPct={velocityPct}
-          minWidth={160}
-        />
-        <MetricCard
-          label="Iteration End"
-          value={iterationEnd.value}
-          valueColor={iterationEnd.color}
-          caption={iterationEnd.label}
-          progressPct={iterationProgressPct}
-          progressColor={BRAND.textMuted}
-          minWidth={140}
-        />
-        <MetricCard
-          label="Accepted"
-          value={`${acceptedPct}%`}
-          valueColor="#1e6930"
-          caption={`${metrics?.acceptedPoints ?? 0} of ${metrics?.totalPlanEstimate ?? 0} Points`}
-          progressPct={acceptedPct}
-          progressColor="#1e6930"
-          minWidth={140}
-        />
+        {/* Planned Velocity */}
+        <div className="flex flex-col justify-center" style={{ minWidth: 160 }}>
+          <span
+            style={{
+              fontSize: 10,
+              fontWeight: 600,
+              textTransform: 'uppercase',
+              letterSpacing: '0.5px',
+              color: AZ.textMuted,
+              marginBottom: 2,
+            }}
+          >
+            Planned Velocity
+          </span>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+            <span style={{ fontSize: 22, fontWeight: 700, color: AZ.primary, lineHeight: 1 }}>
+              {velocityPct}%
+            </span>
+            <span style={{ fontSize: 11, color: AZ.textSecondary }}>
+              {metrics?.totalPlanEstimate ?? 0} of {metrics?.plannedVelocity ?? 0} Points
+            </span>
+          </div>
+          <div
+            style={{
+              width: 120,
+              height: 4,
+              backgroundColor: '#e0e0e0',
+              borderRadius: 2,
+              marginTop: 4,
+              overflow: 'hidden',
+            }}
+          >
+            <div
+              style={{
+                width: `${Math.min(velocityPct, 100)}%`,
+                height: '100%',
+                backgroundColor: AZ.primary,
+                borderRadius: 2,
+              }}
+            />
+          </div>
+        </div>
+
+        {/* Iteration End */}
+        <div className="flex flex-col justify-center" style={{ minWidth: 140 }}>
+          <span
+            style={{
+              fontSize: 10,
+              fontWeight: 600,
+              textTransform: 'uppercase',
+              letterSpacing: '0.5px',
+              color: AZ.textMuted,
+              marginBottom: 2,
+            }}
+          >
+            Iteration End
+          </span>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+            <span style={{ fontSize: 22, fontWeight: 700, color: '#8a5808', lineHeight: 1 }}>
+              {metrics?.daysLeft == null ? '—' : String(Math.max(metrics.daysLeft, 0))}
+            </span>
+            <span style={{ fontSize: 11, color: AZ.textSecondary }}>
+              {metrics?.daysLeft == null ? 'no end date' : `of ${tDays} days left`}
+            </span>
+          </div>
+          <div
+            style={{
+              width: 120,
+              height: 4,
+              backgroundColor: '#e0e0e0',
+              borderRadius: 2,
+              marginTop: 4,
+              overflow: 'hidden',
+            }}
+          >
+            <div
+              style={{
+                width: `${Math.min(iterationProgressPct, 100)}%`,
+                height: '100%',
+                backgroundColor: '#999999',
+                borderRadius: 2,
+              }}
+            />
+          </div>
+        </div>
+
+        {/* Accepted */}
+        <div className="flex flex-col justify-center" style={{ minWidth: 140 }}>
+          <span
+            style={{
+              fontSize: 10,
+              fontWeight: 600,
+              textTransform: 'uppercase',
+              letterSpacing: '0.5px',
+              color: AZ.textMuted,
+              marginBottom: 2,
+            }}
+          >
+            Accepted
+          </span>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+            <span style={{ fontSize: 22, fontWeight: 700, color: '#1e6930', lineHeight: 1 }}>
+              {acceptedPct}%
+            </span>
+            <span style={{ fontSize: 11, color: AZ.textSecondary }}>
+              {metrics?.acceptedPoints ?? 0} of {metrics?.totalPlanEstimate ?? 0} Points
+            </span>
+          </div>
+          <div
+            style={{
+              width: 120,
+              height: 4,
+              backgroundColor: '#e0e0e0',
+              borderRadius: 2,
+              marginTop: 4,
+              overflow: 'hidden',
+            }}
+          >
+            <div
+              style={{
+                width: `${Math.min(acceptedPct, 100)}%`,
+                height: '100%',
+                backgroundColor: '#1e6930',
+                borderRadius: 2,
+              }}
+            />
+          </div>
+        </div>
       </div>
 
       {/* Right side: Defects, Tasks, View Charts */}
@@ -1405,13 +1014,6 @@ function Toolbar({
   hidden,
   toggleVisible,
   reorder,
-  stateFilter,
-  setStateFilter,
-  ownerFilter,
-  setOwnerFilter,
-  blockedOnly,
-  setBlockedOnly,
-  members,
 }: {
   search: string
   setSearch: (v: string) => void
@@ -1422,143 +1024,269 @@ function Toolbar({
   hidden: Set<ColKey>
   toggleVisible: (key: ColKey) => void
   reorder: (dragKey: ColKey, overKey: ColKey) => void
-  stateFilter: ScheduleState | 'all'
-  setStateFilter: (v: ScheduleState | 'all') => void
-  ownerFilter: string
-  setOwnerFilter: (v: string) => void
-  blockedOnly: boolean
-  setBlockedOnly: (v: boolean) => void
-  members: import('@/features/teams/api').ProjectMember[]
 }) {
-  const activeFilterCount =
-    (stateFilter !== 'all' ? 1 : 0) + (ownerFilter !== 'all' ? 1 : 0) + (blockedOnly ? 1 : 0)
   return (
-    <PageToolbar
-      search={{
-        value: search,
-        onChange: setSearch,
-        placeholder: 'Search Work Items',
-        ariaLabel: 'Search work items',
-        width: 220,
+    <div
+      className="flex shrink-0 items-center gap-2 px-4"
+      style={{
+        height: 36,
+        borderBottom: `1px solid ${AZ.border}`,
+        backgroundColor: AZ.bg,
       }}
-      actions={
-        canCreate ? (
-          <button
-            onClick={onAddNew}
-            className="flex items-center gap-1.5 rounded px-3 py-1 text-[11px] font-semibold text-white"
-            style={{ backgroundColor: BRAND.primary }}
-          >
-            <Plus size={14} /> Add New
-          </button>
-        ) : undefined
-      }
-      activeFilterCount={activeFilterCount}
-      defaultFiltersOpen={activeFilterCount > 0}
-      filters={
-        <>
-          <label
-            className="flex items-center gap-1.5 text-[11px] font-semibold"
-            style={{ color: BRAND.textSecondary }}
-          >
-            State
-            <InlineSelect
-              value={stateFilter}
-              aria-label="Filter by schedule state"
-              onChange={(e) => setStateFilter(e.target.value as ScheduleState | 'all')}
-              className="w-auto"
-            >
-              <option value="all">All States</option>
-              {SCHEDULE_STATE_VALUES.map((s) => (
-                <option key={s} value={s}>
-                  {SCHEDULE_STATE_LABEL[s as ScheduleState] ?? s}
-                </option>
-              ))}
-            </InlineSelect>
-          </label>
-          <label
-            className="flex items-center gap-1.5 text-[11px] font-semibold"
-            style={{ color: BRAND.textSecondary }}
-          >
-            Owner
-            <InlineSelect
-              value={ownerFilter}
-              aria-label="Filter by owner"
-              onChange={(e) => setOwnerFilter(e.target.value)}
-              className="w-auto"
-            >
-              <option value="all">All Owners</option>
-              <option value={OWNER_UNASSIGNED}>Unassigned</option>
-              {members.map((m) => (
-                <option key={m.userId} value={m.userId}>
-                  {m.displayName}
-                </option>
-              ))}
-            </InlineSelect>
-          </label>
-          <label
-            className="flex cursor-pointer items-center gap-1.5 text-[11px] font-medium"
-            style={{ color: BRAND.textPrimary }}
-          >
-            <input
-              type="checkbox"
-              checked={blockedOnly}
-              onChange={(e) => setBlockedOnly(e.target.checked)}
-            />
-            Blocked items only
-          </label>
-          {activeFilterCount > 0 && (
-            <button
-              onClick={() => {
-                setStateFilter('all')
-                setOwnerFilter('all')
-                setBlockedOnly(false)
-              }}
-              className="cursor-pointer rounded px-2.5 py-1 text-[11px]"
-              style={{ color: BRAND.primaryLight }}
-            >
-              Clear filters
-            </button>
-          )}
-        </>
-      }
-      fields={
-        <ColumnFieldsMenu
-          columns={columns}
-          order={order}
-          hidden={hidden}
-          onToggle={toggleVisible}
-          onReorder={reorder}
+    >
+      <div className="relative">
+        <Search
+          size={14}
+          style={{
+            position: 'absolute',
+            left: 8,
+            top: '50%',
+            transform: 'translateY(-50%)',
+            pointerEvents: 'none',
+            color: AZ.textMuted,
+          }}
         />
-      }
-    />
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search Work Items"
+          aria-label="Search work items"
+          style={{
+            paddingLeft: 30,
+            paddingRight: 10,
+            height: 26,
+            fontSize: 12,
+            borderRadius: 2,
+            border: `1px solid ${AZ.border}`,
+            backgroundColor: AZ.bg,
+            color: AZ.textPrimary,
+            width: 220,
+            fontFamily: AZ.font,
+            outline: 'none',
+          }}
+          onFocus={(e) => {
+            e.currentTarget.style.borderColor = AZ.primary
+          }}
+          onBlur={(e) => {
+            e.currentTarget.style.borderColor = AZ.border
+          }}
+        />
+      </div>
+
+      {canCreate && (
+        <button
+          onClick={onAddNew}
+          className="flex items-center gap-1.5"
+          style={{
+            padding: '4px 14px',
+            fontSize: 12,
+            fontWeight: 600,
+            color: '#fff',
+            backgroundColor: AZ.primary,
+            border: 'none',
+            borderRadius: 2,
+            cursor: 'pointer',
+            fontFamily: AZ.font,
+          }}
+          onMouseOver={(e) => {
+            e.currentTarget.style.backgroundColor = AZ.primaryHover
+          }}
+          onMouseOut={(e) => {
+            e.currentTarget.style.backgroundColor = AZ.primary
+          }}
+        >
+          <Plus size={14} /> Add New
+        </button>
+      )}
+
+      <button
+        className="flex items-center gap-1.5"
+        style={{
+          padding: '4px 12px',
+          fontSize: 12,
+          fontWeight: 500,
+          color: AZ.textSecondary,
+          backgroundColor: 'transparent',
+          border: `1px solid ${AZ.border}`,
+          borderRadius: 2,
+          cursor: 'pointer',
+          fontFamily: AZ.font,
+        }}
+        onMouseOver={(e) => {
+          e.currentTarget.style.backgroundColor = AZ.bgAlt
+        }}
+        onMouseOut={(e) => {
+          e.currentTarget.style.backgroundColor = 'transparent'
+        }}
+      >
+        <Filter size={14} /> Show Filters
+      </button>
+
+      <ColumnFieldsMenu
+        columns={columns}
+        order={order}
+        hidden={hidden}
+        onToggle={toggleVisible}
+        onReorder={reorder}
+        buttonStyle={{
+          padding: '4px 12px',
+          fontWeight: 500,
+          border: `1px solid ${AZ.border}`,
+          fontFamily: AZ.font,
+        }}
+      />
+    </div>
   )
 }
 
 // ── Table header row ─────────────────────────────────────────────────────────
 
-// ── Header column metadata ──────────────────────────────────────────────────
-// Drives the (single-source) header render: label, optional sort key, and
-// alignment. Order mirrors ITERATION_STATUS_COLUMNS; visual position is driven
-// by CSS `order` via styleFor, so the DOM order stays canonical.
-const HEADER_META: DataTableHeaderColumn<ColKey>[] = [
-  { key: 'rank', label: 'Rank', sortCol: 'rank', align: 'center' },
-  { key: 'id', label: 'ID', sortCol: 'id' },
-  { key: 'name', label: 'Name', sortCol: 'name' },
-  { key: 'feature', label: 'Feature' },
-  { key: 'state', label: 'Schedule State', sortCol: 'scheduleState' },
-  { key: 'block', label: 'Block', sortCol: 'block', align: 'center' },
-  { key: 'blockedReason', label: 'Blocked Reason' },
-  { key: 'planEstimate', label: 'Plan Est', sortCol: 'planEstimate', align: 'right' },
-  { key: 'taskEstimate', label: 'Task Est', sortCol: 'taskEstimate', align: 'right' },
-  { key: 'toDo', label: 'To Do', sortCol: 'toDo', align: 'right' },
-  { key: 'tasksPct', label: 'Tasks' },
-  { key: 'actual', label: 'Actual', align: 'right' },
-  { key: 'owner', label: 'Owner', sortCol: 'owner' },
-  { key: 'defects', label: 'Defects', align: 'center' },
-  { key: 'defectStatus', label: 'Defect Status' },
-  { key: 'milestones', label: 'Milestones' },
-  { key: 'devOwner', label: 'Dev Owner' },
-]
+function TableHeaderRow({
+  colStyles,
+  sortCol,
+  sortDir,
+  toggleSort,
+  startResize,
+}: {
+  colStyles: Record<string, React.CSSProperties>
+  sortCol: string | null
+  sortDir: 'asc' | 'desc'
+  toggleSort: (col: string) => void
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  startResize: (col: any, e: React.MouseEvent) => void
+}) {
+  return (
+    <div
+      className="sticky top-0 z-10 flex items-center select-none"
+      style={{
+        height: 34,
+        paddingLeft: 4,
+        paddingRight: 12,
+        backgroundColor: '#f3f4f6',
+        borderBottom: '1px solid #e2e8f0',
+        fontSize: 11,
+        fontWeight: 700,
+        color: '#4b5563',
+        minWidth: 'max-content',
+      }}
+    >
+      <div style={colStyles.rank} className="group relative px-2 text-center">
+        <SortHeader label="#" col="rank" activeCol={sortCol} dir={sortDir} onSort={toggleSort} />
+        <ResizeHandle onMouseDown={(e) => startResize('rank', e)} ariaLabel="Resize rank column" />
+      </div>
+      <div style={colStyles.id} className="group relative px-2">
+        <SortHeader label="ID" col="id" activeCol={sortCol} dir={sortDir} onSort={toggleSort} />
+        <ResizeHandle onMouseDown={(e) => startResize('id', e)} ariaLabel="Resize ID column" />
+      </div>
+      <div style={colStyles.type} className="group relative px-2 text-center">
+        <span className="text-[11px] font-medium" style={{ color: AZ.textMuted }}>Type</span>
+      </div>
+      <div style={colStyles.name} className="group relative px-2">
+        <SortHeader label="Name" col="name" activeCol={sortCol} dir={sortDir} onSort={toggleSort} />
+        <ResizeHandle onMouseDown={(e) => startResize('name', e)} ariaLabel="Resize Name column" />
+      </div>
+      <div style={colStyles.state} className="group relative px-2 text-center">
+        <SortHeader
+          label="State"
+          col="scheduleState"
+          activeCol={sortCol}
+          dir={sortDir}
+          onSort={toggleSort}
+        />
+        <ResizeHandle
+          onMouseDown={(e) => startResize('state', e)}
+          ariaLabel="Resize State column"
+        />
+      </div>
+      <div style={colStyles.block} className="group relative px-2 text-center">
+        <SortHeader
+          label="Block"
+          col="block"
+          activeCol={sortCol}
+          dir={sortDir}
+          onSort={toggleSort}
+        />
+        <ResizeHandle
+          onMouseDown={(e) => startResize('block', e)}
+          ariaLabel="Resize Block column"
+        />
+      </div>
+      <div style={colStyles.planEstimate} className="group relative px-2 text-right">
+        <SortHeader
+          label="Plan Estimate"
+          col="planEstimate"
+          activeCol={sortCol}
+          dir={sortDir}
+          onSort={toggleSort}
+          rightAlign
+        />
+        <ResizeHandle
+          onMouseDown={(e) => startResize('planEstimate', e)}
+          ariaLabel="Resize Plan Estimate column"
+        />
+      </div>
+      <div style={colStyles.taskEstimate} className="group relative px-2 text-right">
+        <SortHeader
+          label="Task Estimate"
+          col="taskEstimate"
+          activeCol={sortCol}
+          dir={sortDir}
+          onSort={toggleSort}
+          rightAlign
+        />
+        <ResizeHandle
+          onMouseDown={(e) => startResize('taskEstimate', e)}
+          ariaLabel="Resize Task Estimate column"
+        />
+      </div>
+      <div style={colStyles.toDo} className="group relative px-2 text-right">
+        <SortHeader
+          label="To Do"
+          col="toDo"
+          activeCol={sortCol}
+          dir={sortDir}
+          onSort={toggleSort}
+          rightAlign
+        />
+        <ResizeHandle onMouseDown={(e) => startResize('toDo', e)} ariaLabel="Resize To Do column" />
+      </div>
+      <div style={colStyles.actual} className="group relative px-2 text-right">
+        <span>Actual</span>
+        <ResizeHandle
+          onMouseDown={(e) => startResize('actual', e)}
+          ariaLabel="Resize Actual column"
+        />
+      </div>
+      <div style={colStyles.owner} className="group relative px-2">
+        <SortHeader
+          label="Owner"
+          col="owner"
+          activeCol={sortCol}
+          dir={sortDir}
+          onSort={toggleSort}
+        />
+        <ResizeHandle
+          onMouseDown={(e) => startResize('owner', e)}
+          ariaLabel="Resize Owner column"
+        />
+      </div>
+      <div style={colStyles.defects} className="group relative px-2 text-center">
+        <span>Defects</span>
+        <ResizeHandle
+          onMouseDown={(e) => startResize('defects', e)}
+          ariaLabel="Resize Defects column"
+        />
+      </div>
+      <div style={colStyles.devOwner} className="group relative px-2">
+        <span>DEV O</span>
+        <ResizeHandle
+          onMouseDown={(e) => startResize('devOwner', e)}
+          ariaLabel="Resize Dev Owner column"
+        />
+      </div>
+    </div>
+  )
+}
 
 // ── Table footer totals ──────────────────────────────────────────────────────
 
@@ -1584,33 +1312,72 @@ function TableFooterTotals({
         minWidth: 'max-content',
       }}
     >
-      <div className="w-5 shrink-0 px-2" />
-      <div className="w-4 shrink-0 px-2" />
       <div style={colStyles.rank} />
       <div style={colStyles.id} />
-      <div style={colStyles.name} className="flex items-center px-2">
-        Totals ({totals.count})
+      <div style={colStyles.type} />
+      <div style={colStyles.name} className="flex gap-24">
+        <span>{totals.planEst} Points</span>
+        <span>{totals.taskEst} Hours</span>
+        <span>{totals.toDoSum} Hours</span>
       </div>
-      <div style={colStyles.feature} />
       <div style={colStyles.state} />
       <div style={colStyles.block} />
-      <div style={colStyles.blockedReason} />
-      <div style={colStyles.planEstimate} className="px-2 text-right">
-        {totals.planEst} Points
-      </div>
-      <div style={colStyles.taskEstimate} className="px-2 text-right">
-        {totals.taskEst} Hours
-      </div>
-      <div style={colStyles.toDo} className="px-2 text-right">
-        {totals.toDoSum} Hours
-      </div>
-      <div style={colStyles.tasksPct} />
+      <div style={colStyles.planEstimate} />
+      <div style={colStyles.taskEstimate} />
+      <div style={colStyles.toDo} />
       <div style={colStyles.actual} />
       <div style={colStyles.owner} />
       <div style={colStyles.defects} />
-      <div style={colStyles.defectStatus} />
-      <div style={colStyles.milestones} />
       <div style={colStyles.devOwner} />
+    </div>
+  )
+}
+
+// ── Sort header ─────────────────────────────────────────────────────────────
+
+function SortHeader({
+  label,
+  col,
+  activeCol,
+  dir,
+  onSort,
+  rightAlign,
+}: {
+  label: string
+  col: string
+  activeCol: string | null
+  dir?: 'asc' | 'desc'
+  onSort: (col: string) => void
+  rightAlign?: boolean
+}) {
+  const isActive = activeCol === col
+  return (
+    <div
+      className="group/sort flex cursor-pointer items-center gap-1 select-none"
+      style={{ justifyContent: rightAlign ? 'flex-end' : 'flex-start', width: '100%' }}
+      onClick={() => onSort(col)}
+    >
+      <span
+        style={{
+          color: isActive ? BRAND.primaryLight : '#4b5563',
+          fontWeight: 700,
+        }}
+        className="transition-colors duration-150 group-hover/sort:text-slate-800"
+      >
+        {label}
+      </span>
+      {isActive ? (
+        dir === 'desc' ? (
+          <ChevronDown size={11} className="shrink-0 text-[#1d3f73]" />
+        ) : (
+          <ChevronUp size={11} className="shrink-0 text-[#1d3f73]" />
+        )
+      ) : (
+        <ChevronUp
+          size={11}
+          className="shrink-0 text-slate-300 opacity-0 transition-opacity duration-150 group-hover/sort:opacity-100"
+        />
+      )}
     </div>
   )
 }
@@ -1621,46 +1388,35 @@ function StatusRow({
   item,
   rank,
   memberMap,
-  milestoneOptions,
   selectedIterationId,
   canEdit,
   colStyles,
   dragEnabled,
-  selected,
-  onToggleSelect,
   onOpen,
 }: {
   item: IterationStatusItem
   rank: number
   memberMap: Map<string, import('@/features/teams/api').ProjectMember>
-  milestoneOptions: readonly { id: string; name: string }[]
   selectedIterationId: string
   canEdit: boolean
   colStyles: Record<string, React.CSSProperties>
   dragEnabled: boolean
-  selected: boolean
-  onToggleSelect: () => void
   onOpen: () => void
 }) {
   const navigate = useNavigate()
   const update = useUpdateWorkItem(item.id)
-  const setMilestones = useSetWorkItemMilestones(item.id)
   const member = item.assigneeId ? memberMap.get(item.assigneeId) : undefined
   const ownerName = member?.displayName ?? member?.email ?? null
-  const devOwner = item.devOwnerId ? memberMap.get(item.devOwnerId) : undefined
-  const devOwnerName = devOwner?.displayName ?? devOwner?.email ?? null
 
-  // Narrowed locals so closures below keep the non-null type.
-  const featureKey = item.featureKey
-  const featureTitle = item.featureTitle
-  const milestones = item.milestones
-
+  const stateLetter = STATE_LETTER[item.scheduleState] ?? '?'
   const [tasksExpanded, setTasksExpanded] = useState(false)
   const { data: childTasks = [], isLoading: isLoadingTasks } = useTasks(
     tasksExpanded ? item.id : undefined,
   )
 
   const membersList = useMemo(() => Array.from(memberMap.values()), [memberMap])
+
+  const [editingOwner, setEditingOwner] = useState(false)
 
   const {
     setNodeRef,
@@ -1711,43 +1467,17 @@ function StatusRow({
     )
   }
 
-  function commitTitle(raw: string) {
-    const next = raw.trim()
-    if (!next || next === item.title) return
-    update.mutate(
-      { title: next },
-      {
-        onSuccess: () => toast.success('Name updated'),
-        onError: (err) => toast.error(err.message),
-      },
-    )
-  }
-
   function handleOwnerChange(userId: string | null) {
     update.mutate(
       { assigneeId: userId },
       {
-        onSuccess: () => toast.success('Owner updated'),
+        onSuccess: () => {
+          setEditingOwner(false)
+          toast.success('Owner updated')
+        },
         onError: (err) => toast.error(err.message),
       },
     )
-  }
-
-  function handleDevOwnerChange(userId: string | null) {
-    update.mutate(
-      { devOwnerId: userId },
-      {
-        onSuccess: () => toast.success('Dev owner updated'),
-        onError: (err) => toast.error(err.message),
-      },
-    )
-  }
-
-  function handleMilestonesChange(ids: string[]) {
-    setMilestones.mutate(ids, {
-      onSuccess: () => toast.success('Milestones updated'),
-      onError: (err) => toast.error(err.message),
-    })
   }
 
   function toggleBlocked() {
@@ -1765,7 +1495,7 @@ function StatusRow({
     <>
       <div
         ref={setNodeRef}
-        className="group flex items-center transition-colors duration-100 hover:bg-[#f1f6fc]"
+        className="flex items-center transition-colors duration-100 hover:bg-[#f1f6fc]"
         style={{
           height: 34,
           paddingLeft: 4,
@@ -1776,7 +1506,6 @@ function StatusRow({
           minWidth: 'max-content',
           ...rowStyle,
         }}
-        {...(dragEnabled && canEdit ? attributes : {})}
         onMouseOver={(e) => {
           e.currentTarget.style.backgroundColor = '#f1f6fc'
         }}
@@ -1784,28 +1513,16 @@ function StatusRow({
           e.currentTarget.style.backgroundColor = AZ.bg
         }}
       >
-        {/* Leading gutter (rank grip + selection checkbox) — shared component so
-            the header, rows and nested child rows stay column-aligned. */}
-        <RowGutter
-          ref={setActivatorNodeRef}
-          dragDisabled={!dragEnabled || !canEdit}
-          dragListeners={dragEnabled && canEdit ? listeners : undefined}
-          stopPropagation
-          checkbox={{
-            checked: selected,
-            onChange: onToggleSelect,
-            ariaLabel: `Select ${item.itemKey}`,
-          }}
-        />
-
-        {/* Rank number + expand toggle */}
-        <div style={colStyles.rank} className="flex items-center justify-center gap-1.5 px-2">
+        {/* Rank / Expand Button */}
+        <div style={colStyles.rank} className="flex items-center justify-center gap-1 px-2">
+          <span className="font-mono text-[10px]" style={{ color: AZ.textSecondary }}>
+            {rank}
+          </span>
           <button
             onClick={(e) => {
               e.stopPropagation()
               setTasksExpanded(!tasksExpanded)
             }}
-            aria-label={tasksExpanded ? 'Collapse tasks' : 'Expand tasks'}
             style={{
               background: 'none',
               border: 'none',
@@ -1824,67 +1541,133 @@ function StatusRow({
               }}
             />
           </button>
-          <span className="font-mono text-[10px] tabular-nums" style={{ color: AZ.textSecondary }}>
-            {rank}
+          <span
+            ref={setActivatorNodeRef}
+            {...(dragEnabled && canEdit ? { ...attributes, ...listeners } : {})}
+            style={{ display: 'inline-flex', cursor: dragEnabled && canEdit ? 'grab' : 'default' }}
+          >
+            <GripVertical size={12} style={{ color: AZ.textMuted }} />
           </span>
         </div>
 
+        {/* Type */}
+        <div style={colStyles.type} className="flex items-center justify-center px-1">
+          <TypeBadge type={item.type} />
+        </div>
+
         {/* ID */}
-        <div style={colStyles.id} className="px-2">
-          <IdCell type={item.type} itemKey={item.itemKey} onOpen={onOpen} />
-        </div>
-
-        {/* Name — click to edit inline (Rally parity); use the ID link to open */}
-        <div
-          style={colStyles.name}
-          className="overflow-hidden px-2"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <InlineEditableCell
-            value={item.title}
-            canEdit={canEdit}
-            onCommit={commitTitle}
-            ariaLabel="Name"
-            title={item.title}
-            className="block w-full truncate"
-            style={{ fontSize: 12, color: AZ.textPrimary, fontFamily: AZ.font }}
-            inputStyle={{
-              width: '100%',
+        <div style={colStyles.id} className="flex items-center gap-1 overflow-hidden px-2">
+          <button
+            onClick={onOpen}
+            title={item.itemKey}
+            className="truncate"
+            style={{
+              minWidth: 0,
               fontSize: 12,
-              fontFamily: AZ.font,
-              color: AZ.textPrimary,
-              border: `1px solid ${AZ.primary}`,
-              borderRadius: 2,
-              outline: 'none',
-              padding: '1px 4px',
+              fontFamily: 'Consolas, Monaco, "Courier New", monospace',
+              color: AZ.primary,
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              padding: 0,
+              textAlign: 'left',
             }}
-          />
+            onMouseOver={(e) => {
+              e.currentTarget.style.textDecoration = 'underline'
+            }}
+            onMouseOut={(e) => {
+              e.currentTarget.style.textDecoration = 'none'
+            }}
+          >
+            {item.itemKey}
+          </button>
         </div>
 
-        {/* Feature */}
-        <div style={colStyles.feature} className="flex items-center overflow-hidden px-2">
-          {featureKey ? (
-            <FeatureCell
-              featureKey={featureKey}
-              featureTitle={featureTitle}
-              onOpen={() => navigate({ to: '/item/$itemKey', params: { itemKey: featureKey } })}
-            />
+        {/* Name */}
+        <div style={colStyles.name} className="overflow-hidden px-2">
+          <button
+            onClick={onOpen}
+            style={{
+              fontSize: 12,
+              color: AZ.textPrimary,
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              padding: 0,
+              textAlign: 'left',
+              width: '100%',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              display: 'block',
+              fontFamily: AZ.font,
+            }}
+            onMouseOver={(e) => {
+              e.currentTarget.style.textDecoration = 'underline'
+            }}
+            onMouseOut={(e) => {
+              e.currentTarget.style.textDecoration = 'none'
+            }}
+          >
+            {item.title}
+          </button>
+        </div>
+
+        {/* Schedule State — Continuous Segmented Rectangles layout */}
+        <div style={colStyles.state} className="flex justify-center px-2 select-none">
+          {canEdit ? (
+            <div
+              className="flex overflow-hidden rounded border"
+              style={{ borderColor: AZ.border, height: 20 }}
+            >
+              {SCHEDULE_STATE_VALUES.map((s) => {
+                const isSel = item.scheduleState === s
+                return (
+                  <button
+                    key={s}
+                    title={SCHEDULE_STATE_LABEL[s as ScheduleState] ?? s}
+                    onClick={() => {
+                      if (!isSel) update.mutate({ scheduleState: s as ScheduleState })
+                    }}
+                    style={{
+                      border: 'none',
+                      padding: '0 4px',
+                      fontSize: '9px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      backgroundColor: isSel ? AZ.primary : '#fff',
+                      color: isSel ? '#fff' : AZ.textSecondary,
+                    }}
+                  >
+                    {STATE_LETTER[s] ?? s[0].toUpperCase()}
+                  </button>
+                )
+              })}
+            </div>
           ) : (
-            <span style={{ color: AZ.textMuted, fontSize: 12 }}>&mdash;</span>
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 22,
+                height: 20,
+                borderRadius: 2,
+                fontSize: 11,
+                fontWeight: 700,
+                backgroundColor:
+                  SCHEDULE_STATE_CONFIG[item.scheduleState as ScheduleState]?.bg ?? AZ.primaryLight,
+                color:
+                  SCHEDULE_STATE_CONFIG[item.scheduleState as ScheduleState]?.color ?? AZ.primary,
+                fontFamily: AZ.font,
+              }}
+              title={
+                SCHEDULE_STATE_LABEL[item.scheduleState as ScheduleState] ?? item.scheduleState
+              }
+            >
+              {stateLetter}
+            </span>
           )}
-        </div>
-
-        {/* Schedule State — Rally-style segmented stepper */}
-        <div
-          style={colStyles.state}
-          className="flex items-center px-2 select-none"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <ScheduleStateStepper
-            value={item.scheduleState as ScheduleState}
-            canEdit={canEdit}
-            onChange={(next) => update.mutate({ scheduleState: next })}
-          />
         </div>
 
         {/* Block - Click to Toggle */}
@@ -1939,21 +1722,6 @@ function StatusRow({
               </span>
             )}
           </button>
-        </div>
-
-        {/* Blocked Reason */}
-        <div style={colStyles.blockedReason} className="flex items-center px-2">
-          {item.blockedReason ? (
-            <span
-              className="truncate"
-              title={item.blockedReason}
-              style={{ fontSize: 12, color: AZ.textSecondary }}
-            >
-              {item.blockedReason}
-            </span>
-          ) : (
-            <span style={{ color: AZ.textMuted, fontSize: 12 }}>&mdash;</span>
-          )}
         </div>
 
         {/* Plan Estimate */}
@@ -2020,11 +1788,6 @@ function StatusRow({
           />
         </div>
 
-        {/* Tasks % complete (rollup) */}
-        <div style={colStyles.tasksPct} className="flex items-center px-2">
-          <TasksProgress estimate={item.taskEstimate} toDo={item.toDo} />
-        </div>
-
         {/* Actual — not tracked at story level, only on tasks */}
         <div
           style={{ ...colStyles.actual, textAlign: 'right', color: AZ.textMuted, fontSize: 12 }}
@@ -2034,82 +1797,64 @@ function StatusRow({
         </div>
 
         {/* Owner */}
-        <div
-          style={colStyles.owner}
-          className="overflow-hidden px-2"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <OwnerSelectCell
-            ownerName={ownerName}
-            assigneeId={item.assigneeId}
-            members={membersList}
-            canEdit={canEdit}
-            onChange={handleOwnerChange}
-          />
-        </div>
-
-        {/* Defects — child-defect count */}
-        <div
-          style={{ ...colStyles.defects, textAlign: 'center', fontSize: 12 }}
-          className="px-2 text-center"
-        >
-          {item.defectCount > 0 ? (
-            <span style={{ color: AZ.textSecondary, fontWeight: 600 }}>{item.defectCount}</span>
+        <div style={colStyles.owner} className="overflow-hidden px-2">
+          {editingOwner && canEdit ? (
+            <select
+              autoFocus
+              value={item.assigneeId ?? ''}
+              onChange={(e) => handleOwnerChange(e.target.value || null)}
+              onBlur={() => setEditingOwner(false)}
+              style={{
+                width: '100%',
+                fontSize: 11,
+                border: `1px solid ${AZ.primary}`,
+                borderRadius: 2,
+                fontFamily: AZ.font,
+              }}
+            >
+              <option value="">Unassigned</option>
+              {membersList.map((m) => (
+                <option key={m.userId} value={m.userId}>
+                  {m.displayName}
+                </option>
+              ))}
+            </select>
           ) : (
-            <span style={{ color: AZ.textMuted }}>&mdash;</span>
+            <span
+              onClick={canEdit ? () => setEditingOwner(true) : undefined}
+              style={{
+                fontSize: 12,
+                cursor: canEdit ? 'pointer' : 'default',
+                color: ownerName ? AZ.textSecondary : AZ.textMuted,
+              }}
+            >
+              {ownerName ?? 'Unassigned'}
+            </span>
           )}
         </div>
 
-        {/* Defect Status — open/closed summary */}
-        <div style={colStyles.defectStatus} className="flex items-center px-2">
-          <DefectStatusPill total={item.defectCount} open={item.openDefectCount} />
+        {/* Defects — no per-item data available */}
+        <div
+          style={{ ...colStyles.defects, textAlign: 'center', color: AZ.textMuted, fontSize: 12 }}
+          className="px-2 text-center"
+        >
+          &mdash;
         </div>
 
-        {/* Milestones — inline multi-select (add/remove) */}
-        <div
-          style={colStyles.milestones}
-          className="flex items-center overflow-hidden px-2"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <MilestoneSelectCell
-            selected={milestones}
-            options={milestoneOptions}
-            canEdit={canEdit}
-            saving={setMilestones.isPending}
-            onCommit={handleMilestonesChange}
-          />
-        </div>
-
-        {/* Dev Owner — editable assignee (distinct from Owner) */}
-        <div
-          style={colStyles.devOwner}
-          className="overflow-hidden px-2"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <OwnerSelectCell
-            ownerName={devOwnerName}
-            assigneeId={item.devOwnerId}
-            members={membersList}
-            canEdit={canEdit}
-            onChange={handleDevOwnerChange}
-            ariaLabel="Dev owner"
-          />
+        {/* DEV O — assignee name */}
+        <div style={colStyles.devOwner} className="overflow-hidden px-2">
+          <span style={{ fontSize: 12, color: ownerName ? AZ.textSecondary : AZ.textMuted }}>
+            {ownerName ?? 'Unassigned'}
+          </span>
         </div>
 
         {/* selectedIterationId kept for future refetch semantics */}
         <span hidden>{selectedIterationId}</span>
       </div>
 
-      {/* Child Tasks List — the 2px hierarchy rail is an inset shadow (not a
-          border) so it never shifts the child columns out of alignment with
-          the parent row / header. */}
+      {/* Child Tasks List */}
       {tasksExpanded && (
-        <div
-          style={{
-            backgroundColor: '#fafbfc',
-            boxShadow: `inset 2px 0 0 ${AZ.primaryLight}`,
-          }}
-        >
+        <div style={{ borderLeft: `2px solid ${AZ.primaryLight}`, backgroundColor: '#fafbfc' }}>
           {isLoadingTasks && (
             <div
               style={{
@@ -2178,18 +1923,7 @@ function ChildTaskRow({
   onOpen: () => void
 }) {
   const updateTask = useUpdateWorkItem(task.id)
-
-  function commitTaskTitle(raw: string) {
-    const next = raw.trim()
-    if (!next || next === task.title) return
-    updateTask.mutate(
-      { title: next },
-      {
-        onSuccess: () => toast.success('Name updated'),
-        onError: (err) => toast.error(err.message),
-      },
-    )
-  }
+  const [editingOwner, setEditingOwner] = useState(false)
 
   function commitTaskEstimate(raw: string) {
     const num = raw.trim() === '' ? null : Number(raw)
@@ -2241,33 +1975,21 @@ function ChildTaskRow({
     updateTask.mutate(
       { assigneeId: userId },
       {
-        onSuccess: () => toast.success('Owner updated'),
+        onSuccess: () => {
+          setEditingOwner(false)
+          toast.success('Owner updated')
+        },
         onError: (err) => toast.error(err.message),
       },
     )
   }
-
-  function handleDevOwnerChange(userId: string | null) {
-    updateTask.mutate(
-      { devOwnerId: userId },
-      {
-        onSuccess: () => toast.success('Dev owner updated'),
-        onError: (err) => toast.error(err.message),
-      },
-    )
-  }
-
-  const devOwnerMember = task.devOwnerId
-    ? membersList.find((m) => m.userId === task.devOwnerId)
-    : undefined
-  const taskDevOwnerName = devOwnerMember?.displayName ?? devOwnerMember?.email ?? null
 
   return (
     <div
       className="flex items-center"
       style={{
         height: 30,
-        paddingLeft: 4,
+        paddingLeft: 44,
         paddingRight: 12,
         borderBottom: `1px dashed ${AZ.border}`,
         fontSize: 11,
@@ -2281,44 +2003,39 @@ function ChildTaskRow({
         e.currentTarget.style.backgroundColor = 'transparent'
       }}
     >
-      {/* Leading gutter mirrors the parent row exactly (grip · checkbox · rank)
-          via the shared component, so every child cell lines up under the same
-          column. */}
-      <RowGutter dragDisabled />
       <div style={colStyles.rank} className="px-2" />
-      {/* ID nested under the parent via the shared indent token. */}
-      <div style={colStyles.id} className={`pr-2 ${NESTED_ROW_INDENT}`}>
-        <IdCell type={task.type} itemKey={task.itemKey} onOpen={onOpen} />
+      <div style={colStyles.type} className="flex items-center justify-center px-1">
+        <TypeBadge type={task.type} />
       </div>
-      <div
-        style={colStyles.name}
-        className="overflow-hidden px-2"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <InlineEditableCell
-          value={task.title}
-          canEdit={canEdit}
-          onCommit={commitTaskTitle}
-          ariaLabel="Name"
-          title={task.title}
-          className="block w-full truncate"
-          style={{ fontSize: 12, color: AZ.textPrimary, fontFamily: AZ.font }}
-          inputStyle={{
-            width: '100%',
-            fontSize: 12,
-            fontFamily: AZ.font,
-            color: AZ.textPrimary,
-            border: `1px solid ${AZ.primary}`,
-            borderRadius: 2,
-            outline: 'none',
-            padding: '1px 4px',
+      <div style={colStyles.id} className="flex items-center gap-1 px-2">
+        <button
+          onClick={onOpen}
+          style={{
+            fontSize: 11,
+            fontFamily: 'Consolas, Monaco, monospace',
+            color: AZ.primary,
+            background: 'none',
+            border: 'none',
+            cursor: 'pointer',
+            padding: 0,
+            textAlign: 'left',
           }}
-        />
+          onMouseOver={(e) => {
+            e.currentTarget.style.textDecoration = 'underline'
+          }}
+          onMouseOut={(e) => {
+            e.currentTarget.style.textDecoration = 'none'
+          }}
+        >
+          {task.itemKey}
+        </button>
       </div>
-      <div style={colStyles.feature} className="px-2" />
+      <div style={colStyles.name} className="overflow-hidden px-2">
+        <span style={{ color: AZ.textPrimary }}>{task.title}</span>
+      </div>
       <div
         style={colStyles.state}
-        className="flex items-center px-2"
+        className="flex justify-center px-2"
         onClick={(e) => e.stopPropagation()}
       >
         <SimplifiedStateControl
@@ -2336,7 +2053,6 @@ function ChildTaskRow({
         />
       </div>
       <div style={colStyles.block} className="px-2" />
-      <div style={colStyles.blockedReason} className="px-2" />
       <div style={colStyles.planEstimate} className="px-2" />
       <div style={{ ...colStyles.taskEstimate, textAlign: 'right' }} className="px-2 text-right">
         <InlineEditableCell
@@ -2376,7 +2092,6 @@ function ChildTaskRow({
           ariaLabel="Todo hours"
         />
       </div>
-      <div style={colStyles.tasksPct} className="px-2" />
       <div style={{ ...colStyles.actual, textAlign: 'right' }} className="px-2 text-right">
         <InlineEditableCell
           value={String(task.actualHours ?? '')}
@@ -2396,66 +2111,76 @@ function ChildTaskRow({
           ariaLabel="Actual hours"
         />
       </div>
-      <div
-        style={colStyles.owner}
-        className="overflow-hidden px-2"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <OwnerSelectCell
-          ownerName={task.assigneeId ? taskOwner : null}
-          assigneeId={task.assigneeId}
-          members={membersList}
-          canEdit={canEdit}
-          onChange={handleOwnerChange}
-        />
+      <div style={colStyles.owner} className="overflow-hidden px-2">
+        {editingOwner && canEdit ? (
+          <select
+            autoFocus
+            value={task.assigneeId ?? ''}
+            onChange={(e) => handleOwnerChange(e.target.value || null)}
+            onBlur={() => setEditingOwner(false)}
+            style={{
+              width: '100%',
+              fontSize: 11,
+              border: `1px solid ${AZ.primary}`,
+              borderRadius: 2,
+              fontFamily: AZ.font,
+            }}
+          >
+            <option value="">Unassigned</option>
+            {membersList.map((m) => (
+              <option key={m.userId} value={m.userId}>
+                {m.displayName}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span
+            onClick={canEdit ? () => setEditingOwner(true) : undefined}
+            style={{ cursor: canEdit ? 'pointer' : 'default' }}
+          >
+            {taskOwner}
+          </span>
+        )}
       </div>
       <div style={colStyles.defects} className="px-2" />
-      <div style={colStyles.defectStatus} className="px-2" />
-      <div style={colStyles.milestones} className="px-2" />
-      <div
-        style={colStyles.devOwner}
-        className="overflow-hidden px-2"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <OwnerSelectCell
-          ownerName={taskDevOwnerName}
-          assigneeId={task.devOwnerId}
-          members={membersList}
-          canEdit={canEdit}
-          onChange={handleDevOwnerChange}
-          ariaLabel="Dev owner"
-        />
+      <div style={colStyles.devOwner} className="overflow-hidden px-2">
+        {editingOwner && canEdit ? (
+          <select
+            value={task.assigneeId ?? ''}
+            onChange={(e) => handleOwnerChange(e.target.value || null)}
+            onBlur={() => setEditingOwner(false)}
+            style={{
+              width: '100%',
+              fontSize: 11,
+              border: `1px solid ${AZ.primary}`,
+              borderRadius: 2,
+              fontFamily: AZ.font,
+            }}
+          >
+            <option value="">Unassigned</option>
+            {membersList.map((m) => (
+              <option key={m.userId} value={m.userId}>
+                {m.displayName}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span
+            onClick={canEdit ? () => setEditingOwner(true) : undefined}
+            style={{ cursor: canEdit ? 'pointer' : 'default' }}
+          >
+            {taskOwner}
+          </span>
+        )}
       </div>
     </div>
   )
 }
 
-// ── Segmented state stepper (Rally parity) ──────────────────────────────────
-// Both wrappers delegate to the shared StateStepper so every grid row —
-// story/defect and task — uses one visual language (see state-stepper.tsx).
+// ── Simplified 3-rectangle state control (Defined / In Progress / Complete) ──
+// Same segmented-rectangle visual language as the US/DE state column above,
+// collapsed to the 3 states that apply to Tasks.
 
-// Story-level schedule-state stepper (7 states).
-function ScheduleStateStepper({
-  value,
-  canEdit,
-  onChange,
-}: {
-  value: ScheduleState
-  canEdit: boolean
-  onChange: (next: ScheduleState) => void
-}) {
-  return (
-    <StateStepper
-      steps={SCHEDULE_STATE_STEPS}
-      value={value}
-      canEdit={canEdit}
-      onChange={onChange}
-      ariaLabel="Schedule state"
-    />
-  )
-}
-
-// Task-level simplified-state stepper (Define / In-Progress / Complete).
 function SimplifiedStateControl({
   scheduleState,
   canEdit,
@@ -2465,15 +2190,58 @@ function SimplifiedStateControl({
   canEdit: boolean
   onChange: (next: ScheduleState) => void
 }) {
-  const current = SIMPLIFIED_STATE_TO_SCHEDULE_STATE[getSimplifiedState(scheduleState)]
+  const current = getSimplifiedState(scheduleState)
+
+  if (!canEdit) {
+    const cfg = SIMPLIFIED_STATE_CONFIG[current]
+    return (
+      <span
+        style={{
+          padding: '1px 6px',
+          borderRadius: 2,
+          fontSize: 10,
+          fontWeight: 600,
+          backgroundColor: cfg.bg,
+          color: cfg.color,
+        }}
+        title={SIMPLIFIED_STATE_LABEL[current]}
+      >
+        {SIMPLIFIED_STATE_LABEL[current]}
+      </span>
+    )
+  }
+
   return (
-    <StateStepper
-      steps={SIMPLIFIED_STATE_STEPS}
-      value={current}
-      canEdit={canEdit}
-      onChange={onChange}
-      ariaLabel="Task state"
-    />
+    <div
+      className="flex overflow-hidden rounded border"
+      style={{ borderColor: AZ.border, height: 20 }}
+    >
+      {SIMPLIFIED_STATE_ORDER.map((s) => {
+        const isSel = current === s
+        const cfg = SIMPLIFIED_STATE_CONFIG[s]
+        return (
+          <button
+            key={s}
+            title={SIMPLIFIED_STATE_LABEL[s]}
+            onClick={() => {
+              if (!isSel) onChange(SIMPLIFIED_STATE_TO_SCHEDULE_STATE[s])
+            }}
+            style={{
+              border: 'none',
+              padding: '0 4px',
+              fontSize: '9px',
+              fontWeight: 700,
+              cursor: 'pointer',
+              backgroundColor: isSel ? cfg.activeBg : '#fff',
+              color: isSel ? '#fff' : cfg.color,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {SIMPLIFIED_STATE_LABEL[s][0]}
+          </button>
+        )
+      })}
+    </div>
   )
 }
 
